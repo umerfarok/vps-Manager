@@ -40,6 +40,7 @@ class SSHManager {
     }
   }
   async executeCommand(userId, command) {
+ console.log('executeCommand', userId, command);
     const conn = this.getConnection(userId);
     if (!conn) {
       throw new Error('No active SSH connection');

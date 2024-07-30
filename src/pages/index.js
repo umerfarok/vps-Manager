@@ -1,3 +1,4 @@
+"use client";
 import React, { useEffect, useState } from 'react';
 import {
   Button, TextField, Box, Typography, RadioGroup, FormControlLabel, Radio,
@@ -9,14 +10,7 @@ import Link from 'next/link';
 import axios from 'axios';
 import { Computer, HardDrive, Globe, Shield, Settings, Server, Cloud } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-const getOrCreateUserId = () => {
-  let userId = localStorage.getItem('userId');
-  if (!userId) {
-    userId = uuidv4();
-    localStorage.setItem('userId', userId);
-  }
-  return userId;
-};
+
 
 const StyledCard = styled(Card)(({ theme }) => ({
   height: '100%',
@@ -58,7 +52,7 @@ const LoaderOverlay = styled(Box)(({ theme }) => ({
 }));
 
 export default function Home() {
-  const [userId, setUserId] = useState(getOrCreateUserId());
+  const [userId, setUserId] = useState();
   const [connection, setConnection] = useState({
     host: '',
     port: '22',
@@ -68,6 +62,19 @@ export default function Home() {
     privateKey: '',
     userId: userId
   });
+  useEffect(() => {
+    const getOrCreateUserId = () => {
+      let userId = localStorage.getItem('userId');
+      if (!userId) {
+        userId = uuidv4();
+        localStorage.setItem('userId', userId);
+      }
+      return userId;
+    };
+
+    const userId = getOrCreateUserId();
+    setUserId(userId);
+  }, []);
 
   const [loading, setLoading] = useState(false);
   const [setupLoading, setSetupLoading] = useState({

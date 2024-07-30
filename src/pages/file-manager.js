@@ -1,3 +1,4 @@
+"use client";
 import React, { useState, useEffect } from 'react';
 import {
   Box, Typography, Button, TextField, Dialog, DialogTitle, DialogContent, DialogActions,
@@ -9,12 +10,6 @@ import {
   Edit, Delete, FileCopy, Download
 } from '@mui/icons-material';
 import axios from 'axios';
-import React, { useState } from 'react';
-import Dialog from '@mui/material/Dialog';
-import DialogTitle from '@mui/material/DialogTitle';
-import DialogContent from '@mui/material/DialogContent';
-import DialogActions from '@mui/material/DialogActions';
-import Button from '@mui/material/Button';
 import { Editor } from '@monaco-editor/react';
 
 export default function FileManager() {
@@ -297,36 +292,7 @@ export default function FileManager() {
           <Button onClick={handleDialogConfirm}>Confirm</Button>
         </DialogActions>
       </Dialog>
-      <Dialog open={isNewFileDialogOpen} onClose={handleNewFileDialogClose} maxWidth="md" fullWidth>
-        <DialogTitle>Create New File</DialogTitle>
-        <DialogContent>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="File Name"
-            fullWidth
-            value={newFileName}
-            onChange={(e) => setNewFileName(e.target.value)}
-            sx={{ mb: 2 }}
-          />
-          <TextField
-            label="File Content"
-            multiline
-            fullWidth
-            rows={20}
-            value={newFileContent}
-            onChange={(e) => setNewFileContent(e.target.value)}
-            variant="outlined"
-            InputProps={{
-              style: { fontFamily: 'monospace' }
-            }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleNewFileDialogClose}>Cancel</Button>
-          <Button onClick={handleNewFileConfirm}>Create File</Button>
-        </DialogActions>
-      </Dialog>
+      <NewFileDialog isNewFileDialogOpen={isNewFileDialogOpen} handleNewFileDialogClose={handleNewFileDialogClose} handleNewFileConfirm={handleNewFileConfirm} />
     </Box>
   );
 }
