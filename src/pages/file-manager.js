@@ -9,6 +9,13 @@ import {
   Edit, Delete, FileCopy, Download
 } from '@mui/icons-material';
 import axios from 'axios';
+import React, { useState } from 'react';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import Button from '@mui/material/Button';
+import { Editor } from '@monaco-editor/react';
 
 export default function FileManager() {
   const [files, setFiles] = useState([]);
@@ -22,7 +29,9 @@ export default function FileManager() {
   const [isLoading, setIsLoading] = useState(false);
   const [sortBy, setSortBy] = useState('name');
   const [sortDirection, setSortDirection] = useState('asc');
-
+  const [isNewFileDialogOpen, setIsNewFileDialogOpen] = useState(false);
+  const [newFileName, setNewFileName] = useState('');
+  const [newFileContent, setNewFileContent] = useState('');
   let getOrCreateUserId = () => {
     let userId = localStorage.getItem('userId');
     if (!userId) {
@@ -32,6 +41,7 @@ export default function FileManager() {
     return userId;
   };
   const [userId, setUserId] = useState(getOrCreateUserId());
+
 
   useEffect(() => {
     fetchFiles(currentPath);
@@ -61,8 +71,12 @@ export default function FileManager() {
   };
 
   const handleNewItem = (type) => {
-    setDialogAction(type);
-    setIsDialogOpen(true);
+    if (type === 'file') {
+      setIsNewFileDialogOpen(true);
+    } else {
+      setDialogAction(type);
+      setIsDialogOpen(true);
+    }
   };
 
   const handleDialogClose = () => {
@@ -70,6 +84,12 @@ export default function FileManager() {
     setNewItemName('');
     setFileContent('');
     setSelectedFile(null);
+  };
+
+  const handleNewFileDialogClose = () => {
+    setIsNewFileDialogOpen(false);
+    setNewFileName('');
+    setNewFileContent('');
   };
 
   const handleDialogConfirm = async () => {
@@ -99,6 +119,22 @@ export default function FileManager() {
       handleDialogClose();
     } catch (error) {
       console.error('Operation failed:', error);
+    }
+  };
+
+  const handleNewFileConfirm = async () => {
+    try {
+      await axios.post('/api/files', { 
+        name: newFileName, 
+        type: 'file', 
+        path: currentPath,
+        content: newFileContent 
+      },
+      { headers: { 'x-user-id': userId }});
+      fetchFiles(currentPath);
+      handleNewFileDialogClose();
+    } catch (error) {
+      console.error('Failed to create new file:', error);
     }
   };
 
@@ -261,6 +297,83 @@ export default function FileManager() {
           <Button onClick={handleDialogConfirm}>Confirm</Button>
         </DialogActions>
       </Dialog>
+      <Dialog open={isNewFileDialogOpen} onClose={handleNewFileDialogClose} maxWidth="md" fullWidth>
+        <DialogTitle>Create New File</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="File Name"
+            fullWidth
+            value={newFileName}
+            onChange={(e) => setNewFileName(e.target.value)}
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            label="File Content"
+            multiline
+            fullWidth
+            rows={20}
+            value={newFileContent}
+            onChange={(e) => setNewFileContent(e.target.value)}
+            variant="outlined"
+            InputProps={{
+              style: { fontFamily: 'monospace' }
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleNewFileDialogClose}>Cancel</Button>
+          <Button onClick={handleNewFileConfirm}>Create File</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
+
+
+
+const NewFileDialog = ({ isNewFileDialogOpen, handleNewFileDialogClose, handleNewFileConfirm }) => {
+  const [newFileName, setNewFileName] = useState('');
+  const [newFileContent, setNewFileContent] = useState('');
+
+  const handleEditorChange = (value) => {
+    setNewFileContent(value || '');
+  };
+
+  return (
+    <Dialog open={isNewFileDialogOpen} onClose={handleNewFileDialogClose} maxWidth="md" fullWidth>
+      <DialogTitle>Create New File</DialogTitle>
+      <DialogContent>
+        <TextField
+          autoFocus
+          margin="dense"
+          label="File Name"
+          fullWidth
+          value={newFileName}
+          onChange={(e) => setNewFileName(e.target.value)}
+          sx={{ mb: 2 }}
+        />
+        <div style={{ height: '500px', width: '100%' }}>
+          <Editor
+            height="100%"
+            width="100%"
+            language="javascript" // You can adjust this according to the file type
+            value={newFileContent}
+            onChange={handleEditorChange}
+            options={{
+              selectOnLineNumbers: true,
+              lineNumbers: 'on',
+              fontFamily: 'monospace',
+            }}
+          />
+        </div>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={handleNewFileDialogClose}>Cancel</Button>
+        <Button onClick={() => handleNewFileConfirm(newFileName, newFileContent)}>Create File</Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
