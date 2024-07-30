@@ -1,3 +1,4 @@
+"use client";
 import { useState, useEffect } from 'react';
 import { Box, Typography, Button } from '@mui/material';
 import AceEditor from 'react-ace';
@@ -7,6 +8,7 @@ import axios from 'axios';
 
 export default function CaddyConfig() {
   const [config, setConfig] = useState('');
+  const { userId, isLoadingUserId } = useUser();
 
   useEffect(() => {
     fetchConfig();
@@ -14,7 +16,7 @@ export default function CaddyConfig() {
 
   const fetchConfig = async () => {
     try {
-      const res = await axios.get('/api/caddy');
+      const res = await axios.get('/api/caddy', { headers: { 'x-user-Id': userId } });
       setConfig(res.data.config);
     } catch (error) {
       console.error('Failed to fetch Caddy config:', error);
@@ -29,6 +31,9 @@ export default function CaddyConfig() {
       alert('Failed to save Caddy configuration: ' + error.response.data.error);
     }
   };
+  if(isLoadingUserId){
+    return <div>Loading...</div>
+  }
 
   return (
     <Box sx={{ maxWidth: 800, margin: 'auto', mt: 4 }}>

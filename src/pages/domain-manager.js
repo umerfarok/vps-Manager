@@ -4,6 +4,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import axios from 'axios';
 
 export default function DomainManager() {
+  
   const [domains, setDomains] = useState([]);
   const [newDomain, setNewDomain] = useState('');
 
@@ -13,7 +14,7 @@ export default function DomainManager() {
 
   const fetchDomains = async () => {
     try {
-      const res = await axios.get('/api/domains');
+      const res = await axios.get('/api/domains', { headers: { 'x-user-Id': userId } });
       setDomains(res.data.domains);
     } catch (error) {
       console.error('Failed to fetch domains:', error);
@@ -22,7 +23,7 @@ export default function DomainManager() {
 
   const addDomain = async () => {
     try {
-      await axios.post('/api/domains', { domain: newDomain });
+      await axios.post('/api/domains', { domain: newDomain }, { headers: { 'x-user-Id': userId } });
       setNewDomain('');
       fetchDomains();
     } catch (error) {
@@ -32,7 +33,7 @@ export default function DomainManager() {
 
   const deleteDomain = async (domain) => {
     try {
-      await axios.delete(`/api/domains?domain=${domain}`);
+      await axios.delete(`/api/domains?domain=${domain}`, { headers: { 'x-user-Id': userId } });
       fetchDomains();
     } catch (error) {
       alert('Failed to delete domain: ' + error.response.data.error);

@@ -1,15 +1,18 @@
 import { useState } from 'react';
 import { Box, Typography, TextField, Button, List, ListItem, ListItemText } from '@mui/material';
 import axios from 'axios';
+import { useUser } from './UserContext';
 
 export default function SSLManager() {
   const [domain, setDomain] = useState('');
   const [email, setEmail] = useState('');
   const [certificates, setCertificates] = useState([]);
+  const { userId, isLoadingUserId } = useUser();
+
 
   const generateSSL = async () => {
     try {
-      const res = await axios.post('/api/ssl', { domain, email });
+      const res = await axios.post('/api/ssl', { domain, email }, { headers: { 'x-user-Id': userId } });
       alert(res.data.message);
       fetchCertificates();
     } catch (error) {
@@ -19,12 +22,15 @@ export default function SSLManager() {
 
   const fetchCertificates = async () => {
     try {
-      const res = await axios.get('/api/ssl');
+      const res = await axios.get('/api/ssl', { headers: { 'x-user-Id': userId } });
       setCertificates(res.data.certificates);
     } catch (error) {
       console.error('Failed to fetch certificates:', error);
     }
   };
+  if (isLoadingUserId) {
+    return <p>Loading...</p>;
+  }
 
   return (
     <Box sx={{ maxWidth: 600, margin: 'auto', mt: 4 }}>

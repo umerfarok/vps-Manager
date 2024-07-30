@@ -9,7 +9,7 @@ import { styled } from '@mui/system';
 import Link from 'next/link';
 import axios from 'axios';
 import { Computer, HardDrive, Globe, Shield, Settings, Server, Cloud } from 'lucide-react';
-import { v4 as uuidv4 } from 'uuid';
+import { useUser } from './UserContext';
 
 
 const StyledCard = styled(Card)(({ theme }) => ({
@@ -52,29 +52,17 @@ const LoaderOverlay = styled(Box)(({ theme }) => ({
 }));
 
 export default function Home() {
-  const [userId, setUserId] = useState();
+  const { userId, isLoadingUserId } = useUser();
   const [connection, setConnection] = useState({
-    host: '',
-    port: '22',
+    host: '127.0.0.1',
+    port: '2222',
     username: '',
     authType: 'password',
     password: '',
     privateKey: '',
     userId: userId
   });
-  useEffect(() => {
-    const getOrCreateUserId = () => {
-      let userId = localStorage.getItem('userId');
-      if (!userId) {
-        userId = uuidv4();
-        localStorage.setItem('userId', userId);
-      }
-      return userId;
-    };
 
-    const userId = getOrCreateUserId();
-    setUserId(userId);
-  }, []);
 
   const [loading, setLoading] = useState(false);
   const [setupLoading, setSetupLoading] = useState({
@@ -92,7 +80,8 @@ export default function Home() {
 
   const checkConnection = async (userId) => {
     try {
-      const res = await axios.get('/api/check-connection', { params: { userId } });
+      console.log('userId', userId);
+      const res = await axios.get('/api/check-connection', { headers: { 'x-user-Id': userId } });
       setIsConnected(res.data.connected);
       if (res.data.connected) {
         setConnection(res.data.connection);
@@ -123,7 +112,7 @@ export default function Home() {
 
     try {
       setSetupLoading({ ...setupLoading, [type]: true });
-      const res = await axios.post('/api/quick-setup', { ...connection, setupType: type });
+      const res = await axios.post('/api/quick-setup', { ...connection, setupType: type }, { headers: { 'x-user-Id': userId } });
       setSnackbar({ open: true, message: res.data.message, severity: 'success' });
     } catch (error) {
       setSnackbar({ open: true, message: 'Setup failed: ' + error.response.data.error, severity: 'error' });
@@ -138,6 +127,20 @@ export default function Home() {
     }
     setSnackbar({ ...snackbar, open: false });
   };
+  if (isLoadingUserId) {
+    return (
+      <Container maxWidth="lg">
+        <Box sx={{ my: 4 }}>
+          <Typography variant="h3" component="h1" gutterBottom align="center" color="primary">
+            VPS Manager
+          </Typography>
+          <LoaderOverlay>
+            <Cloud size={64} className="animate-spin" color="white" />
+          </LoaderOverlay>
+        </Box>
+      </Container>
+    );
+  }
 
   return (
     <Container maxWidth="lg">

@@ -2,7 +2,7 @@ import { sshManager } from '../../lib/sshManager';
 
 export default async function handler(req, res) {
   if (req.method === 'GET') {
-    const { userId } = req.query;
+    const userId = req.headers['x-user-id'];
 
     if (!userId) {
       return res.status(400).json({ error: 'User ID is required' });

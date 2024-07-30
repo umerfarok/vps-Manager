@@ -1,4 +1,5 @@
 import { createTheme, ThemeProvider } from '@mui/material/styles';
+import { UserProvider } from './UserContext';
 
 const theme = createTheme({
   palette: {
@@ -39,7 +40,9 @@ const theme = createTheme({
 function MyApp({ Component, pageProps }) {
   return (
     <ThemeProvider theme={theme}>
+      <UserProvider>
       <Component {...pageProps} />
+      </UserProvider>
     </ThemeProvider>
   );
 }

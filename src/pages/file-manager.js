@@ -11,6 +11,7 @@ import {
 } from '@mui/icons-material';
 import axios from 'axios';
 import { Editor } from '@monaco-editor/react';
+import { useUser } from './UserContext';
 
 export default function FileManager() {
   const [files, setFiles] = useState([]);
@@ -27,16 +28,7 @@ export default function FileManager() {
   const [isNewFileDialogOpen, setIsNewFileDialogOpen] = useState(false);
   const [newFileName, setNewFileName] = useState('');
   const [newFileContent, setNewFileContent] = useState('');
-  let getOrCreateUserId = () => {
-    let userId = localStorage.getItem('userId');
-    if (!userId) {
-      userId = uuidv4();
-      localStorage.setItem('userId', userId);
-    }
-    return userId;
-  };
-  const [userId, setUserId] = useState(getOrCreateUserId());
-
+  const { userId, isLoadingUserId } = useUser();
 
   useEffect(() => {
     fetchFiles(currentPath);
@@ -44,6 +36,12 @@ export default function FileManager() {
 
   const fetchFiles = async (path) => {
     setIsLoading(true);
+    if (!userId) {
+      console.error("userId is not set");
+      setIsLoading(false);
+      return;
+    }
+    console.log("userId", userId);
     try {
       const res = await axios.get(`/api/files?path=${encodeURIComponent(path)}&sortBy=${sortBy}&sortDirection=${sortDirection}`, { headers: { 'x-user-id': userId } });
       setFiles(res.data.files);
@@ -174,6 +172,7 @@ export default function FileManager() {
       console.error('Download failed:', error);
     }
   };
+  
 
   const renderBreadcrumbs = () => {
     const pathParts = currentPath.split('/').filter(Boolean);
@@ -194,6 +193,14 @@ export default function FileManager() {
       </Breadcrumbs>
     );
   };
+  if (isLoadingUserId) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <CircularProgress />
+        <Typography variant="h6" sx={{ ml: 2 }}>Loading user data...</Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ maxWidth: 800, margin: 'auto', mt: 4 }}>

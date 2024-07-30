@@ -4,6 +4,7 @@ import AceEditor from 'react-ace';
 import 'ace-builds/src-noconflict/mode-nginx';
 import 'ace-builds/src-noconflict/theme-monokai';
 import axios from 'axios';
+import { useUser } from './UserContext';
 
 const sampleConfigs = {
   basic: `
@@ -56,6 +57,7 @@ server {
 export default function NginxConfig() {
   const [config, setConfig] = useState('');
   const [selectedSample, setSelectedSample] = useState('');
+  const { userId, isLoadingUserId } = useUser();
 
   useEffect(() => {
     fetchConfig();
@@ -63,7 +65,7 @@ export default function NginxConfig() {
 
   const fetchConfig = async () => {
     try {
-      const res = await axios.get('/api/nginx');
+      const res = await axios.get('/api/nginx', { headers: { 'X-User-Id': userId } });
       setConfig(res.data.config);
     } catch (error) {
       console.error('Failed to fetch Nginx config:', error);
@@ -83,6 +85,9 @@ export default function NginxConfig() {
     setSelectedSample(event.target.value);
     setConfig(sampleConfigs[event.target.value]);
   };
+  if (isLoadingUserId) {
+    return <p>Loading...</p>;
+  }
 
   return (
     <Box sx={{ maxWidth: 800, margin: 'auto', mt: 4 }}>
