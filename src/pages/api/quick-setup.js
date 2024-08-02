@@ -2,29 +2,44 @@ import { sshManager } from '../../lib/sshManager';
 
 const linuxSetupScripts = {
   nginx: `
-    if command -v apt &> /dev/null; then
-      sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx && sudo systemctl start nginx && sudo systemctl enable nginx
+    set -e
+    if command -v apt-get &> /dev/null; then
+      sudo apt-get update
+      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
     elif command -v yum &> /dev/null; then
-      sudo yum update -y && sudo yum install -y nginx && sudo systemctl start nginx && sudo systemctl enable nginx
+      sudo yum update -y
+      sudo yum install -y nginx
     else
       echo "Unsupported package manager" && exit 1
     fi
+    sudo systemctl start nginx || sudo service nginx start
+    sudo systemctl enable nginx || sudo chkconfig nginx on
+    echo "Nginx installation completed"
   `,
   'nginx-certbot': `
-    if command -v apt &> /dev/null; then
-      sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot python3-certbot-nginx && sudo systemctl start nginx && sudo systemctl enable nginx
+    set -e
+    if command -v apt-get &> /dev/null; then
+      sudo apt-get update
+      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot python3-certbot-nginx
     elif command -v yum &> /dev/null; then
-      sudo yum update -y && sudo yum install -y nginx certbot python3-certbot-nginx && sudo systemctl start nginx && sudo systemctl enable nginx
+      sudo yum update -y
+      sudo yum install -y nginx certbot python3-certbot-nginx
     else
       echo "Unsupported package manager" && exit 1
     fi
+    sudo systemctl start nginx || sudo service nginx start
+    sudo systemctl enable nginx || sudo chkconfig nginx on
+    echo "Nginx and Certbot installation completed"
   `,
   caddy: `
-    if command -v apt &> /dev/null; then
-      sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+    set -e
+    if command -v apt-get &> /dev/null; then
+      sudo apt-get update
+      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
       curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
       curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-      sudo DEBIAN_FRONTEND=noninteractive apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+      sudo apt-get update
+      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
     elif command -v yum &> /dev/null; then
       sudo yum install -y yum-utils
       sudo yum-config-manager --add-repo https://yum.caddy.com/caddy.repo
@@ -32,59 +47,14 @@ const linuxSetupScripts = {
     else
       echo "Unsupported package manager" && exit 1
     fi
+    sudo systemctl start caddy || sudo service caddy start
+    sudo systemctl enable caddy || sudo chkconfig caddy on
+    echo "Caddy installation completed"
   `,
 };
 
 const windowsSetupScripts = {
   // ... (your existing Windows setup scripts)
-};
-
-const getPackageManagerStatus = async (userId) => {
-  try {
-    const { code, data } = await sshManager.executeCommand(userId, 'ps aux | grep -E "(apt|dpkg|yum|rpm)"');
-    if (code === 0 && data.trim()) {
-      return data.trim().split('\n').map(line => line.trim());
-    }
-    return [];
-  } catch (error) {
-    console.error('Error getting package manager status:', error);
-    return [];
-  }
-};
-
-const waitForPackageManager = async (userId, retries = 10, interval = 10000) => {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const { code, data } = await sshManager.executeCommand(userId, 'ps aux | grep -E "(apt|dpkg|yum|rpm)"');
-      if (code === 0 && data.trim()) {
-        console.log(`Package manager is busy. Waiting... (Attempt ${i + 1}/${retries})`);
-        await new Promise(resolve => setTimeout(resolve, interval));
-      } else {
-        console.log('Package manager is available');
-        return;
-      }
-    } catch (error) {
-      console.error('Error checking package manager:', error);
-      return;
-    }
-  }
-  throw new Error('Timeout waiting for package manager to be available');
-};
-
-const checkAndInstallCommand = async (userId, command, installCommand) => {
-  try {
-    const { code } = await sshManager.executeCommand(userId, `command -v ${command}`);
-    if (code !== 0) {
-      console.log(`${command} is not available. Installing...`);
-      const { code: installCode, data: installData } = await sshManager.executeCommand(userId, installCommand);
-      if (installCode !== 0) {
-        throw new Error(`Failed to install ${command}: ${installData}`);
-      }
-      console.log(`${command} installed successfully.`);
-    }
-  } catch (error) {
-    throw new Error(`Failed to check/install ${command}: ${error.message}`);
-  }
 };
 
 const getOS = async (userId) => {
@@ -111,6 +81,8 @@ const checkSystemResources = async (userId) => {
       if (freeSpaceGB < 5) {
         throw new Error('Insufficient disk space. At least 5GB of free space is required.');
       }
+    } else {
+      throw new Error('Failed to check disk space');
     }
 
     // Check memory
@@ -120,10 +92,51 @@ const checkSystemResources = async (userId) => {
       if (freeMemoryGB < 1) {
         throw new Error('Insufficient memory. At least 1GB of free memory is required.');
       }
+    } else {
+      throw new Error('Failed to check memory');
     }
   } catch (error) {
     throw new Error(`Failed to check system resources: ${error.message}`);
   }
+};
+
+const executeSetupScript = async (userId, setupScript) => {
+  const maxRetries = 3;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const { code, data } = await sshManager.executeCommand(userId, setupScript);
+      if (code === 0) {
+        return { success: true, data };
+      } else {
+        throw new Error(`Setup failed: ${data}`);
+      }
+    } catch (error) {
+      console.error(`Attempt ${i + 1} failed:`, error.message);
+      if (i === maxRetries - 1) {
+        throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retrying
+    }
+  }
+};
+
+const verifyInstallation = async (userId, setupType) => {
+  const verificationCommands = {
+    nginx: "nginx -v",
+    'nginx-certbot': "nginx -v && certbot --version",
+    caddy: "caddy version"
+  };
+
+  const command = verificationCommands[setupType];
+  if (!command) {
+    throw new Error(`No verification command for setup type: ${setupType}`);
+  }
+
+  const { code, data } = await sshManager.executeCommand(userId, command);
+  if (code !== 0) {
+    throw new Error(`Verification failed: ${data}`);
+  }
+  return data;
 };
 
 export default async function handler(req, res) {
@@ -159,21 +172,18 @@ export default async function handler(req, res) {
     // Check system resources
     await checkSystemResources(userId);
 
-    // Wait for package manager lock to be released
-    await waitForPackageManager(userId);
-
-    // Check and install required commands (for Linux only)
-    if (os === 'linux') {
-      await checkAndInstallCommand(userId, 'sudo', 'apt-get update && apt-get install -y sudo || yum update -y && yum install -y sudo');
-      await checkAndInstallCommand(userId, 'curl', 'sudo apt-get update && sudo apt-get install -y curl || sudo yum update -y && sudo yum install -y curl');
-    }
-
     // Execute the setup script
     const setupScript = os === 'windows' ? windowsSetupScripts[setupType] : linuxSetupScripts[setupType];
-    const { code, data } = await sshManager.executeCommand(userId, setupScript);
+    const { success, data } = await executeSetupScript(userId, setupScript);
 
-    if (code === 0) {
-      res.status(200).json({ message: `${setupType} setup completed successfully`, output: data });
+    if (success) {
+      // Verify the installation
+      const verificationOutput = await verifyInstallation(userId, setupType);
+      res.status(200).json({
+        message: `${setupType} setup completed successfully`,
+        output: data,
+        verificationOutput
+      });
     } else {
       throw new Error(`${setupType} setup failed: ${data}`);
     }
@@ -187,9 +197,6 @@ export default async function handler(req, res) {
 
     if (error.message.includes('No active SSH connection')) {
       res.status(400).json(errorResponse);
-    } else if (error.message.includes('Timeout waiting for package manager')) {
-      errorResponse.error = 'Server is busy. Please try again later.';
-      res.status(503).json(errorResponse);
     } else if (error.message.includes('Authentication failed')) {
       errorResponse.error = 'SSH authentication failed. Please check your credentials.';
       res.status(401).json(errorResponse);
@@ -205,6 +212,12 @@ export default async function handler(req, res) {
     } else if (error.message.includes('Insufficient memory')) {
       errorResponse.error = 'Insufficient memory on the server';
       res.status(507).json(errorResponse);
+    } else if (error.message.includes('Failed to check')) {
+      errorResponse.error = 'Failed to check system resources';
+      res.status(500).json(errorResponse);
+    } else if (error.message.includes('Verification failed')) {
+      errorResponse.error = 'Installation verification failed';
+      res.status(500).json(errorResponse);
     } else {
       res.status(500).json(errorResponse);
     }
