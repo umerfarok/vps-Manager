@@ -3,8 +3,7 @@ import path from 'path';
 import fs from 'fs';
 
 export default async function handler(req, res) {
-  const userId = req.headers['x-user-id']; // Implement proper user authentication
-
+  const userId = req.headers['x-user-id']; 
   if (!userId) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
