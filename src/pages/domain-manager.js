@@ -1,75 +1,161 @@
-import { useState, useEffect } from 'react';
-import { Box, Typography, TextField, Button, List, ListItem, ListItemText, IconButton } from '@mui/material';
-import DeleteIcon from '@mui/icons-material/Delete';
-import axios from 'axios';
+import React, { useState, useEffect } from 'react';
+import {
+  Button,
+  TextField,
+  List,
+  ListItem,
+  ListItemText,
+  IconButton,
+  Typography,
+  Paper,
+  Container,
+  Snackbar,
+  CircularProgress
+} from '@mui/material';
+import { Delete as DeleteIcon } from '@mui/icons-material';
+import { styled } from '@mui/system';
+import { useUser } from './UserContext';
+
+const StyledPaper = styled(Paper)(({ theme }) => ({
+  padding: theme.spacing(3),
+  marginTop: theme.spacing(4),
+}));
+
+const FormContainer = styled('div')(({ theme }) => ({
+  display: 'flex',
+  gap: theme.spacing(2),
+  marginBottom: theme.spacing(3),
+}));
 
 export default function DomainManager() {
-  
   const [domains, setDomains] = useState([]);
   const [newDomain, setNewDomain] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const { userId, isLoadingUserId } = useUser();
 
   useEffect(() => {
-    fetchDomains();
-  }, []);
+    if (!isLoadingUserId && userId) {
+      fetchDomains();
+    }
+  }, [isLoadingUserId, userId]);
 
   const fetchDomains = async () => {
+    setIsLoading(true);
     try {
-      const res = await axios.get('/api/domains', { headers: { 'x-user-Id': userId } });
-      setDomains(res.data.domains);
+      const response = await fetch('/api/domains', {
+        headers: { 'x-user-id': userId },
+      });
+      if (!response.ok) throw new Error('Failed to fetch domains');
+      const data = await response.json();
+      setDomains(data.domains);
     } catch (error) {
-      console.error('Failed to fetch domains:', error);
+      setError('Failed to fetch domains: ' + error.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const addDomain = async () => {
+    setIsLoading(true);
     try {
-      await axios.post('/api/domains', { domain: newDomain }, { headers: { 'x-user-Id': userId } });
+      const response = await fetch('/api/domains', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': userId,
+        },
+        body: JSON.stringify({ domain: newDomain }),
+      });
+      if (!response.ok) throw new Error('Failed to add domain');
       setNewDomain('');
+      setSuccess('Domain added successfully');
       fetchDomains();
     } catch (error) {
-      alert('Failed to add domain: ' + error.response.data.error);
+      setError('Failed to add domain: ' + error.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const deleteDomain = async (domain) => {
+    setIsLoading(true);
     try {
-      await axios.delete(`/api/domains?domain=${domain}`, { headers: { 'x-user-Id': userId } });
+      const response = await fetch(`/api/domains?domain=${encodeURIComponent(domain)}`, {
+        method: 'DELETE',
+        headers: { 'x-user-id': userId },
+      });
+      if (!response.ok) throw new Error('Failed to delete domain');
+      setSuccess('Domain deleted successfully');
       fetchDomains();
     } catch (error) {
-      alert('Failed to delete domain: ' + error.response.data.error);
+      setError('Failed to delete domain: ' + error.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
+  if (isLoadingUserId) {
+    return <CircularProgress />;
+  }
+
   return (
-    <Box sx={{ maxWidth: 600, margin: 'auto', mt: 4 }}>
-      <Typography variant="h4" gutterBottom>
-        Domain Manager
-      </Typography>
-      <Box sx={{ display: 'flex', mb: 2 }}>
-        <TextField
-          fullWidth
-          label="New Domain"
-          value={newDomain}
-          onChange={(e) => setNewDomain(e.target.value)}
-        />
-        <Button variant="contained" onClick={addDomain} sx={{ ml: 2 }}>
-          Add
-        </Button>
-      </Box>
-      <List>
-        {domains.map((domain, index) => (
-          <ListItem
-            key={index}
-            secondaryAction={
-              <IconButton edge="end" aria-label="delete" onClick={() => deleteDomain(domain)}>
-                <DeleteIcon />
-              </IconButton>
-            }
+    <Container maxWidth="md">
+      <StyledPaper elevation={3}>
+        <Typography variant="h4" gutterBottom>
+          Domain Manager
+        </Typography>
+
+        <FormContainer>
+          <TextField
+            fullWidth
+            variant="outlined"
+            label="Enter new domain"
+            value={newDomain}
+            onChange={(e) => setNewDomain(e.target.value)}
+          />
+          <Button
+            variant="contained"
+            onClick={addDomain}
+            disabled={isLoading}
           >
-            <ListItemText primary={domain} />
-          </ListItem>
-        ))}
-      </List>
-    </Box>
+            Add Domain
+          </Button>
+        </FormContainer>
+
+        <List>
+          {domains.map((domain, index) => (
+            <ListItem
+              key={index}
+              secondaryAction={
+                <IconButton
+                  edge="end"
+                  aria-label="delete"
+                  onClick={() => deleteDomain(domain)}
+                  disabled={isLoading}
+                >
+                  <DeleteIcon />
+                </IconButton>
+              }
+            >
+              <ListItemText primary={domain} />
+            </ListItem>
+          ))}
+        </List>
+
+        {isLoading && <CircularProgress />}
+      </StyledPaper>
+
+      <Snackbar
+        open={!!error || !!success}
+        autoHideDuration={6000}
+        onClose={() => {
+          setError('');
+          setSuccess('');
+        }}
+        message={error || success}
+      />
+    </Container>
   );
 }

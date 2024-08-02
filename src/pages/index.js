@@ -53,11 +53,11 @@ const LoaderOverlay = styled(Box)(({ theme }) => ({
 export default function Home() {
   const { userId, isLoadingUserId } = useUser();
   const [connection, setConnection] = useState({
-    host: '',
-    port: '22',
-    username: '',
+    host: '127.0.0.1',
+    port: '2222',
+    username: 'root',
     authType: 'password',
-    password: '',
+    password: 'root',
     privateKey: '',
     userId: userId
   });
