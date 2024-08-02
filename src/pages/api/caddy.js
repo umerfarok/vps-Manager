@@ -1,7 +1,7 @@
 import { sshManager } from '../../lib/sshManager';
 
 export default async function handler(req, res) {
-  const userId = req.headers['x-user-id']; // You should implement proper user authentication
+  const userId = req.headers['x-user-id']; 
 
   if (!userId) {
     return res.status(401).json({ error: 'Unauthorized' });

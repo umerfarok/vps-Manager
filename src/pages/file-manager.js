@@ -1,13 +1,12 @@
-"use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Button, TextField, Dialog, DialogTitle, DialogContent, DialogActions,
   List, ListItem, ListItemIcon, ListItemText, IconButton, Menu, MenuItem, Breadcrumbs, Link,
-  Grid, Paper, Divider, Tooltip, CircularProgress
+  Grid, Paper, Divider, Tooltip, CircularProgress, Snackbar, Alert
 } from '@mui/material';
 import {
   Folder, InsertDriveFile, ArrowUpward, CreateNewFolder, NoteAdd, Refresh, MoreVert,
-  Edit, Delete, FileCopy, Download
+  Edit, Delete, FileCopy, Download, Upload
 } from '@mui/icons-material';
 import axios from 'axios';
 import { Editor } from '@monaco-editor/react';
@@ -28,38 +27,59 @@ export default function FileManager() {
   const [isNewFileDialogOpen, setIsNewFileDialogOpen] = useState(false);
   const [newFileName, setNewFileName] = useState('');
   const [newFileContent, setNewFileContent] = useState('');
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
   const { userId, isLoadingUserId } = useUser();
 
-  useEffect(() => {
-    fetchFiles(currentPath);
-  }, [currentPath, sortBy, sortDirection]);
+  const showSnackbar = (message, severity = 'info') => {
+    setSnackbar({ open: true, message, severity });
+  };
 
-  const fetchFiles = async (path) => {
+  const closeSnackbar = () => {
+    setSnackbar({ ...snackbar, open: false });
+  };
+
+  const fetchFiles = useCallback(async (path) => {
     setIsLoading(true);
     if (!userId) {
       console.error("userId is not set");
       setIsLoading(false);
       return;
     }
-    console.log("userId", userId);
     try {
       const res = await axios.get(`/api/files?path=${encodeURIComponent(path)}&sortBy=${sortBy}&sortDirection=${sortDirection}`, { headers: { 'x-user-id': userId } });
       setFiles(res.data.files);
       setCurrentPath(res.data.currentPath);
     } catch (error) {
       console.error('Failed to fetch files:', error);
+      showSnackbar('Failed to fetch files', 'error');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [userId, sortBy, sortDirection]);
 
-  const handleFileClick = (file) => {
+  useEffect(() => {
+    if (userId) {
+      fetchFiles(currentPath);
+    }
+  }, [fetchFiles, currentPath, userId]);
+
+  const handleFileClick = async (file) => {
     if (file.type === 'directory') {
       setCurrentPath(prevPath => `${prevPath}${file.name}/`);
     } else {
       setSelectedFile(file);
       setDialogAction('edit');
-      setIsDialogOpen(true);
+      setIsLoading(true);
+      try {
+        const res = await axios.get(`/api/files?path=${encodeURIComponent(currentPath + file.name)}&action=read`, { headers: { 'x-user-id': userId } });
+        setFileContent(res.data.content);
+        setIsDialogOpen(true);
+      } catch (error) {
+        console.error('Failed to read file:', error);
+        showSnackbar('Failed to read file', 'error');
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -92,42 +112,49 @@ export default function FileManager() {
           { name: newItemName, type: dialogAction, path: currentPath },
           { headers: { 'x-user-id': userId } }
         );
+        showSnackbar(`${dialogAction} created successfully`, 'success');
       } else if (dialogAction === 'edit') {
         await axios.put('/api/files',
           { name: selectedFile.name, content: fileContent, path: currentPath },
           { headers: { 'x-user-id': userId } }
         );
+        showSnackbar('File updated successfully', 'success');
       } else if (dialogAction === 'delete') {
         await axios.delete('/api/files',
           { data: { name: selectedFile.name, path: currentPath } },
           { headers: { 'x-user-id': userId } }
         );
+        showSnackbar('Item deleted successfully', 'success');
       } else if (dialogAction === 'rename') {
         await axios.put('/api/files',
           { oldName: selectedFile.name, newName: newItemName, path: currentPath },
           { headers: { 'x-user-id': userId } }
         );
+        showSnackbar('Item renamed successfully', 'success');
       }
       fetchFiles(currentPath);
       handleDialogClose();
     } catch (error) {
       console.error('Operation failed:', error);
+      showSnackbar(`Failed to ${dialogAction}`, 'error');
     }
   };
 
   const handleNewFileConfirm = async () => {
     try {
-      await axios.post('/api/files', { 
-        name: newFileName, 
-        type: 'file', 
+      await axios.post('/api/files', {
+        name: newFileName,
+        type: 'file',
         path: currentPath,
-        content: newFileContent 
+        content: newFileContent
       },
-      { headers: { 'x-user-id': userId }});
+        { headers: { 'x-user-id': userId } });
       fetchFiles(currentPath);
       handleNewFileDialogClose();
+      showSnackbar('New file created successfully', 'success');
     } catch (error) {
       console.error('Failed to create new file:', error);
+      showSnackbar('Failed to create new file', 'error');
     }
   };
 
@@ -160,7 +187,10 @@ export default function FileManager() {
 
   const handleDownload = async () => {
     try {
-      const response = await axios.get(`/api/files/download?path=${encodeURIComponent(currentPath + selectedFile.name)}`, { responseType: 'blob' });
+      const response = await axios.get(`/api/files?path=${encodeURIComponent(currentPath + selectedFile.name)}&action=download`, {
+        responseType: 'blob',
+        headers: { 'x-user-id': userId }
+      });
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -168,11 +198,35 @@ export default function FileManager() {
       document.body.appendChild(link);
       link.click();
       link.remove();
+      showSnackbar('File downloaded successfully', 'success');
     } catch (error) {
       console.error('Download failed:', error);
+      showSnackbar('Failed to download file', 'error');
     }
   };
-  
+
+  const handleUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('path', currentPath);
+
+    try {
+      await axios.post('/api/files?action=upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'x-user-id': userId
+        }
+      });
+      fetchFiles(currentPath);
+      showSnackbar('File uploaded successfully', 'success');
+    } catch (error) {
+      console.error('Upload failed:', error);
+      showSnackbar('Failed to upload file', 'error');
+    }
+  };
 
   const renderBreadcrumbs = () => {
     const pathParts = currentPath.split('/').filter(Boolean);
@@ -193,6 +247,7 @@ export default function FileManager() {
       </Breadcrumbs>
     );
   };
+
   if (isLoadingUserId) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -224,6 +279,19 @@ export default function FileManager() {
         </Grid>
         <Grid item>
           <Button startIcon={<Refresh />} onClick={() => fetchFiles(currentPath)}>Refresh</Button>
+        </Grid>
+        <Grid item>
+          <Button
+            component="label"
+            startIcon={<Upload />}
+          >
+            Upload File
+            <input
+              type="file"
+              hidden
+              onChange={handleUpload}
+            />
+          </Button>
         </Grid>
       </Grid>
       <Paper elevation={3}>
@@ -299,23 +367,28 @@ export default function FileManager() {
           <Button onClick={handleDialogConfirm}>Confirm</Button>
         </DialogActions>
       </Dialog>
-      <NewFileDialog isNewFileDialogOpen={isNewFileDialogOpen} handleNewFileDialogClose={handleNewFileDialogClose} handleNewFileConfirm={handleNewFileConfirm} />
+      <NewFileDialog
+        isOpen={isNewFileDialogOpen}
+        handleClose={handleNewFileDialogClose}
+        handleConfirm={handleNewFileConfirm}
+        setNewFileName={setNewFileName}
+        setNewFileContent={setNewFileContent}
+      /><Snackbar open={snackbar.open} autoHideDuration={6000} onClose={closeSnackbar}>
+        <Alert onClose={closeSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
 
-
-
-const NewFileDialog = ({ isNewFileDialogOpen, handleNewFileDialogClose, handleNewFileConfirm }) => {
-  const [newFileName, setNewFileName] = useState('');
-  const [newFileContent, setNewFileContent] = useState('');
-
+const NewFileDialog = ({ isOpen, handleClose, handleConfirm, setNewFileName, setNewFileContent }) => {
   const handleEditorChange = (value) => {
     setNewFileContent(value || '');
   };
 
   return (
-    <Dialog open={isNewFileDialogOpen} onClose={handleNewFileDialogClose} maxWidth="md" fullWidth>
+    <Dialog open={isOpen} onClose={handleClose} maxWidth="md" fullWidth>
       <DialogTitle>Create New File</DialogTitle>
       <DialogContent>
         <TextField
@@ -323,7 +396,6 @@ const NewFileDialog = ({ isNewFileDialogOpen, handleNewFileDialogClose, handleNe
           margin="dense"
           label="File Name"
           fullWidth
-          value={newFileName}
           onChange={(e) => setNewFileName(e.target.value)}
           sx={{ mb: 2 }}
         />
@@ -331,8 +403,7 @@ const NewFileDialog = ({ isNewFileDialogOpen, handleNewFileDialogClose, handleNe
           <Editor
             height="100%"
             width="100%"
-            language="javascript" // You can adjust this according to the file type
-            value={newFileContent}
+            language="javascript" 
             onChange={handleEditorChange}
             options={{
               selectOnLineNumbers: true,
@@ -343,10 +414,9 @@ const NewFileDialog = ({ isNewFileDialogOpen, handleNewFileDialogClose, handleNe
         </div>
       </DialogContent>
       <DialogActions>
-        <Button onClick={handleNewFileDialogClose}>Cancel</Button>
-        <Button onClick={() => handleNewFileConfirm(newFileName, newFileContent)}>Create File</Button>
+        <Button onClick={handleClose}>Cancel</Button>
+        <Button onClick={handleConfirm}>Create File</Button>
       </DialogActions>
     </Dialog>
   );
 };
-
