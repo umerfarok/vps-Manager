@@ -57,7 +57,10 @@ async function handlePostRequest(userId, currentPath, body, res) {
     return res.status(400).json({ error: 'Name and type are required' });
   }
 
-  const fullPath = path.join(currentPath, name);
+  // Sanitize the file name to remove any leading/trailing slashes
+  const sanitizedFileName = path.basename(name).replace(/^\/*/, '');
+  const sanitizedCurrentPath = currentPath.replace(/\/+$/, '');
+  const fullPath = path.join(sanitizedCurrentPath, sanitizedFileName);
   let command;
 
   if (type === 'directory') {
