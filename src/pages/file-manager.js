@@ -64,6 +64,7 @@ export default function FileManager() {
   }, [fetchFiles, currentPath, userId]);
 
   const handleFileClick = async (file) => {
+    debugger
     if (file.type === 'directory') {
       setCurrentPath(prevPath => `${prevPath}${file.name}/`);
     } else {
@@ -71,8 +72,7 @@ export default function FileManager() {
       setDialogAction('edit');
       setIsLoading(true);
       try {
-        const res = await axios.get(`/api/files?path=${encodeURIComponent(currentPath + file.name)}&action=read`, { headers: { 'x-user-id': userId } });
-        setFileContent(res.data.content);
+        const res = await axios.get(`/api/files?path=${encodeURIComponent(currentPath + file.name)}&action=read&filename=${encodeURIComponent(file.name)}`, { headers: { 'x-user-id': userId } });        setFileContent(res.data.content);
         setIsDialogOpen(true);
       } catch (error) {
         console.error('Failed to read file:', error);

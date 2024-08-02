@@ -141,18 +141,25 @@ async function handleDownload(userId, currentPath, filename, res) {
   }
 }
 
+
 async function handleReadFile(userId, currentPath, filename, res) {
   if (!filename) {
     return res.status(400).json({ error: 'Filename is required' });
   }
 
-  const fullPath = path.join(currentPath, filename);
-
-  const { code, data } = await sshManager.executeCommand(userId, `cat "${fullPath}"`);
-  if (code === 0) {
-    res.status(200).json({ content: data });
-  } else {
-    res.status(500).json({ error: 'Failed to read file' });
+  const fullPath = path.join(currentPath);
+console.log(fullPath);
+  try {
+    const { code, data, stderr } = await sshManager.executeCommand(userId, `cat "${fullPath}"`);
+    if (code === 0) {
+      res.status(200).json({ content: data });
+    } else {
+      console.error(`Failed to read file: ${stderr}`);
+      res.status(500).json({ error: 'Failed to read file', details: stderr });
+    }
+  } catch (error) {
+    console.error(`Error reading file: ${error.message}`);
+    res.status(500).json({ error: 'Error reading file', details: error.message });
   }
 }
 
