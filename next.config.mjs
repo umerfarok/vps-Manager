@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  transpilePackages: ['react-syntax-highlighter'],
   webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve.fallback = {

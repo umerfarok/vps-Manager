@@ -1,3 +1,4 @@
+"use client";
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Box, Typography, Button, Paper, List, ListItem, ListItemText,
@@ -11,10 +12,11 @@ import {
 import axios from 'axios';
 import { useUser } from '@/UserContext';
 import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
-import bash from 'react-syntax-highlighter/dist/esm/languages/hljs/bash';
-import { atomOneDark } from 'react-syntax-highlighter/dist/esm/styles/hljs';
+import { atomOneDark } from 'react-syntax-highlighter/dist/cjs/styles/hljs';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import bash from 'react-syntax-highlighter/dist/esm/languages/hljs/bash';
+
 
 SyntaxHighlighter.registerLanguage('bash', bash);
 
