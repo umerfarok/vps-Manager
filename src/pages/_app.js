@@ -43,7 +43,7 @@ function MyApp({ Component, pageProps }) {
     <>
       <Head>
         <title>Vps Manager</title>
-        <meta name="description" content="This is my Next.js application" />
+        <meta name="description" content="Easy manager you vps from your UI" />
       </Head>
         <ThemeProvider theme={theme}>
       <UserProvider>
