@@ -1,41 +1,132 @@
-import { sshManager } from '../../lib/sshManager';
+import React, { useState, useEffect } from 'react';
+import { Box, Typography, TextField, Button, List, ListItem, ListItemText, ListItemSecondaryAction, IconButton, Paper, Snackbar, CircularProgress } from '@mui/material';
+import { Delete as DeleteIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import axios from 'axios';
+import { useUser } from '../UserContext';
 
-export default async function handler(req, res) {
-  const userId = req.headers['x-user-id']; // You should implement proper user authentication
+export default function SSLManager() {
+  const [domain, setDomain] = useState('');
+  const [email, setEmail] = useState('');
+  const [certificates, setCertificates] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
+  const { userId, isLoadingUserId } = useUser();
 
-  if (!userId) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  useEffect(() => {
+    if (userId) {
+      fetchCertificates();
+    }
+  }, [userId]);
+
+  const generateSSL = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.post('/api/ssl', { domain, email }, { headers: { 'x-user-id': userId } });
+      showSnackbar(res.data.message, 'success');
+      fetchCertificates();
+      setDomain('');
+      setEmail('');
+    } catch (error) {
+      showSnackbar(`Failed to generate SSL: ${error.response?.data?.error || error.message}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const revokeSSL = async (domain) => {
+    setLoading(true);
+    try {
+      const res = await axios.delete('/api/ssl', { data: { domain }, headers: { 'x-user-id': userId } });
+      showSnackbar(res.data.message, 'success');
+      fetchCertificates();
+    } catch (error) {
+      showSnackbar(`Failed to revoke SSL: ${error.response?.data?.error || error.message}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchCertificates = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get('/api/ssl', { headers: { 'x-user-id': userId } });
+      setCertificates(res.data.certificates);
+    } catch (error) {
+      showSnackbar(`Failed to fetch certificates: ${error.message}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const showSnackbar = (message, severity) => {
+    setSnackbar({ open: true, message, severity });
+  };
+
+  if (isLoadingUserId) {
+    return <CircularProgress />;
   }
 
-  if (req.method === 'GET') {
-    try {
-      const { code, data } = await sshManager.executeCommand(userId, 'sudo certbot certificates');
-      if (code === 0) {
-        const certificates = data.split('Certificate Name:').slice(1).map(cert => {
-          const domain = cert.match(/^\s*(.*?)\n/)?.[1].trim();
-          const expiryDate = cert.match(/Expiry Date: (.*?) /)?.[1];
-          return { domain, expiryDate };
-        });
-        res.status(200).json({ certificates });
-      } else {
-        res.status(500).json({ error: 'Failed to fetch SSL certificates' });
-      }
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  } else if (req.method === 'POST') {
-    const { domain, email } = req.body;
-    try {
-      const { code, data } = await sshManager.executeCommand(userId, `sudo certbot --nginx -d ${domain} -m ${email} --agree-tos --non-interactive`);
-      if (code === 0) {
-        res.status(200).json({ message: 'SSL certificate generated successfully', output: data });
-      } else {
-        res.status(500).json({ error: 'Failed to generate SSL certificate', output: data });
-      }
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  } else {
-    res.status(405).json({ error: 'Method not allowed' });
-  }
+  return (
+    <Box sx={{ maxWidth: 800, margin: 'auto', mt: 4, p: 3 }}>
+      <Typography variant="h4" gutterBottom>
+        SSL Certificate Manager
+      </Typography>
+      <Paper elevation={3} sx={{ p: 3, mb: 4 }}>
+        <Typography variant="h6" gutterBottom>
+          Generate New SSL Certificate
+        </Typography>
+        <TextField
+          fullWidth
+          label="Domain"
+          value={domain}
+          onChange={(e) => setDomain(e.target.value)}
+          margin="normal"
+        />
+        <TextField
+          fullWidth
+          label="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          margin="normal"
+        />
+        <Button
+          variant="contained"
+          onClick={generateSSL}
+          sx={{ mt: 2 }}
+          disabled={loading || !domain || !email}
+        >
+          {loading ? <CircularProgress size={24} /> : 'Generate SSL Certificate'}
+        </Button>
+      </Paper>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h6">
+          Existing Certificates
+        </Typography>
+        <IconButton onClick={fetchCertificates} disabled={loading}>
+          <RefreshIcon />
+        </IconButton>
+      </Box>
+      <List>
+        {certificates.map((cert, index) => (
+          <ListItem key={index}>
+            <ListItemText
+              primary={cert.domain}
+              secondary={`Expires: ${new Date(cert.expiryDate).toLocaleDateString()}`}
+            />
+            <ListItemSecondaryAction>
+              <IconButton edge="end" aria-label="delete" onClick={() => revokeSSL(cert.domain)} disabled={loading}>
+                <DeleteIcon />
+              </IconButton>
+            </ListItemSecondaryAction>
+          </ListItem>
+        ))}
+      </List>
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        message={snackbar.message}
+      />
+    </Box>
+  );
 }

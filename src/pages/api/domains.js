@@ -21,7 +21,7 @@ export default async function handler(req, res) {
     }
   };
 
-  if (req.method === 'GET') {
+  if (req.method === 'GET' && req.url === '/api/domains') {
     try {
       console.log('Executing SSH command to list Nginx sites...');
       const result = await sshManager.executeCommand(userId, `ls ${config.nginxSitesPath}`);
@@ -64,7 +64,7 @@ export default async function handler(req, res) {
       console.error('Failed to fetch domains:', error);
       res.status(500).json({ error: 'Failed to fetch domains: ' + error.message });
     }
-  } else if (req.method === 'POST') {
+  } else if (req.method === 'POST' && req.url === '/api/domains') {
     const { domain } = req.body;
     if (!domain) {
       return res.status(400).json({ error: 'Domain is required' });
@@ -73,12 +73,18 @@ export default async function handler(req, res) {
     const nginxConfig = `
 server {
     listen 80;
+    listen [::]:80;
     server_name ${domain};
     root ${config.wwwPath}/${domain};
-    index index.html;
+    index index.html index.htm index.nginx-debian.html;
 
     location / {
         try_files $uri $uri/ =404;
+    }
+
+    location ~ /.well-known/acme-challenge {
+        allow all;
+        root ${config.wwwPath}/${domain};
     }
 }`;
 
@@ -106,8 +112,8 @@ server {
       console.error('Failed to add domain:', error);
       res.status(500).json({ error: 'Failed to add domain: ' + error.message });
     }
-  } else if (req.method === 'DELETE') {
-    const { domain } = req.query;
+  } else if (req.method === 'DELETE' && req.url.startsWith('/api/domains')) {
+    const domain = req.query.domain;
     if (!domain) {
       return res.status(400).json({ error: 'Domain is required' });
     }
@@ -132,6 +138,44 @@ server {
     } catch (error) {
       console.error('Failed to delete domain:', error);
       res.status(500).json({ error: 'Failed to delete domain: ' + error.message });
+    }
+  } else if (req.method === 'GET' && req.url === '/api/stats') {
+    try {
+      const commands = [
+        "df -h | awk '$NF==\"/\"{printf \"%d,%d,%d\", $2,$3,$5}'",
+        "free -m | awk 'NR==2{printf \"%d,%d,%d\",$2,$3,$4}'",
+        "top -bn1 | grep load | awk '{printf \"%.2f\", $(NF-2)}'",
+        "cat /proc/cpuinfo | grep '^processor' | wc -l"
+      ];
+
+      const result = await sshManager.executeCommand(userId, commands.join(' && '));
+
+      if (result && result.code === 0) {
+        const [disk, memory, load, cpuCount] = result.data.split(' ');
+        const [diskTotal, diskUsed, diskUsedPercent] = disk.split(',');
+        const [memTotal, memUsed, memFree] = memory.split(',');
+
+        res.status(200).json({
+          disk: {
+            total: parseInt(diskTotal),
+            used: parseInt(diskUsed),
+            usedPercent: parseInt(diskUsedPercent)
+          },
+          memory: {
+            total: parseInt(memTotal),
+            used: parseInt(memUsed),
+            free: parseInt(memFree)
+          },
+          load: parseFloat(load),
+          cpuCount: parseInt(cpuCount)
+        });
+      } else {
+        console.error('Failed to fetch stats:', result ? result.data : 'No result');
+        res.status(500).json({ error: 'Failed to fetch stats', output: result ? result.data : 'Unknown error' });
+      }
+    } catch (error) {
+      console.error('Failed to fetch stats:', error);
+      res.status(500).json({ error: 'Failed to fetch stats: ' + error.message });
     }
   } else {
     res.status(405).json({ error: 'Method not allowed' });
