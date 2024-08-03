@@ -5,6 +5,7 @@ import {
   Paper, Grid, Container, InputAdornment, Divider, Card, CardContent, CardActions,
   Snackbar, Alert, CircularProgress
 } from '@mui/material';
+import { Terminal  } from '@mui/icons-material';
 import { styled } from '@mui/system';
 import Link from 'next/link';
 import axios from 'axios';
@@ -355,6 +356,26 @@ export default function Home() {
               <CardActions>
                 <Button fullWidth component={Link} href="/file-manager" variant="contained" disabled={!isConnected}>
                   Open File Manager
+                </Button>
+              </CardActions>
+            </StyledCard>
+          </Grid>
+          <Grid item xs={12} sm={6} md={4}>
+            <StyledCard>
+              <StyledCardContent>
+                <StyledIcon>
+                  <Terminal />
+                </StyledIcon>
+                <Typography variant="h6" component="h2" align="center">
+                  SSH Terminal
+                </Typography>
+                <Typography align="center">
+                  SSH to your VPS from UI
+                </Typography>
+              </StyledCardContent>
+              <CardActions>
+                <Button fullWidth component={Link} href="/terminal-ssh" variant="contained" disabled={!isConnected}>
+                  Open SSH Terminal
                 </Button>
               </CardActions>
             </StyledCard>
