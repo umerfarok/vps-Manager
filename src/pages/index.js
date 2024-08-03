@@ -5,12 +5,13 @@ import {
   Paper, Grid, Container, InputAdornment, Divider, Card, CardContent, CardActions,
   Snackbar, Alert, CircularProgress
 } from '@mui/material';
-import { Terminal  } from '@mui/icons-material';
+import { Terminal } from '@mui/icons-material';
 import { styled } from '@mui/system';
 import Link from 'next/link';
 import axios from 'axios';
 import { Computer, HardDrive, Globe, Shield, Settings, Server, Cloud, PowerOff } from 'lucide-react';
 import { useUser } from '../UserContext';
+import { useConnection } from '@/useConnection';
 
 const StyledCard = styled(Card)(({ theme }) => ({
   height: '100%',
@@ -53,15 +54,7 @@ const LoaderOverlay = styled(Box)(({ theme }) => ({
 
 export default function Home() {
   const { userId, isLoadingUserId } = useUser();
-  const [connection, setConnection] = useState({
-    host: '127.0.0.1',
-    port: '2222',
-    username: 'root',
-    authType: 'password',
-    password: 'root',
-    privateKey: '',
-    userId: userId
-  });
+  const { connection, isConnected, connect, disconnect, setConnection } = useConnection(userId);
 
   const [loading, setLoading] = useState(false);
   const [setupLoading, setSetupLoading] = useState({
@@ -69,57 +62,32 @@ export default function Home() {
     'nginx-certbot': false,
     caddy: false
   });
-  const [isConnected, setIsConnected] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
-  const [keepAliveInterval, setKeepAliveInterval] = useState(null);
 
   useEffect(() => {
-    setConnection(prev => ({ ...prev, userId }));
-    checkConnection(userId);
-
-    return () => {
-      if (keepAliveInterval) {
-        clearInterval(keepAliveInterval);
-      }
-    };
-  }, [userId]);
+    if (userId && !isConnected) {
+      checkConnection(userId);
+    }
+  }, [userId, isConnected]);
 
   const checkConnection = async (userId) => {
     try {
       const res = await axios.get('/api/check-connection', { headers: { 'x-user-Id': userId } });
-      setIsConnected(res.data.connected);
       if (res.data.connected) {
-        setConnection(res.data.connection);
-        startKeepAlive();
+        connect(res.data.connection);
       }
     } catch (error) {
       console.error('Error checking connection:', error);
     }
   };
 
-  const startKeepAlive = () => {
-    const interval = setInterval(async () => {
-      try {
-        await axios.post('/api/keep-alive', null, { headers: { 'x-user-Id': userId } });
-      } catch (error) {
-        console.error('Keep-alive failed:', error);
-        clearInterval(interval);
-        setIsConnected(false);
-        setSnackbar({ open: true, message: 'Connection lost. Please reconnect.', severity: 'error' });
-      }
-    }, 30000); // Send keep-alive every 30 seconds
-    setKeepAliveInterval(interval);
-  };
-
   const handleConnect = async () => {
     try {
       setLoading(true);
-      const res = await axios.post('/api/connect', connection);
-      setIsConnected(true);
-      setSnackbar({ open: true, message: res.data.message, severity: 'success' });
-      startKeepAlive();
+      await connect(connection);
+      setSnackbar({ open: true, message: 'Connected successfully', severity: 'success' });
     } catch (error) {
-      setSnackbar({ open: true, message: 'Connection failed: ' + error.response.data.error, severity: 'error' });
+      setSnackbar({ open: true, message: 'Connection failed: ' + error.message, severity: 'error' });
     } finally {
       setLoading(false);
     }
@@ -128,14 +96,10 @@ export default function Home() {
   const handleDisconnect = async () => {
     try {
       setLoading(true);
-      await axios.post('/api/disconnect', null, { headers: { 'x-user-Id': userId } });
-      setIsConnected(false);
+      await disconnect();
       setSnackbar({ open: true, message: 'Disconnected successfully', severity: 'success' });
-      if (keepAliveInterval) {
-        clearInterval(keepAliveInterval);
-      }
     } catch (error) {
-      setSnackbar({ open: true, message: 'Disconnection failed: ' + error.response.data.error, severity: 'error' });
+      setSnackbar({ open: true, message: 'Disconnection failed: ' + error.message, severity: 'error' });
     } finally {
       setLoading(false);
     }
