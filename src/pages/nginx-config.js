@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react';
-import { Box, Typography, Button, Select, MenuItem } from '@mui/material';
+import React, { useState, useEffect } from 'react';
+import { Box, Typography, Button, Select, MenuItem, TextField, Snackbar, CircularProgress } from '@mui/material';
+import { Alert } from '@mui/material';
 import AceEditor from 'react-ace';
 import 'ace-builds/src-noconflict/mode-nginx';
-import 'ace-builds/src-noconflict/theme-monokai';
+import 'ace-builds/src-noconflict/theme-github';
 import axios from 'axios';
 import { useUser } from '../UserContext';
 
 const sampleConfigs = {
-  basic: `
-server {
+  basic: `server {
     listen 80;
     server_name example.com;
     root /var/www/html;
@@ -17,10 +17,8 @@ server {
     location / {
         try_files $uri $uri/ =404;
     }
-}
-  `,
-  php: `
-server {
+}`,
+  php: `server {
     listen 80;
     server_name example.com;
     root /var/www/html;
@@ -35,10 +33,8 @@ server {
         fastcgi_index index.php;
         include fastcgi_params;
     }
-}
-  `,
-  nodejs: `
-server {
+}`,
+  nodejs: `server {
     listen 80;
     server_name example.com;
 
@@ -50,34 +46,34 @@ server {
         proxy_set_header Host $host;
         proxy_cache_bypass $http_upgrade;
     }
-}
-  `,
+}`
 };
 
-export default function NginxConfig() {
+export default function NginxConfigManager() {
   const [config, setConfig] = useState('');
   const [selectedSample, setSelectedSample] = useState('');
+  const [configName, setConfigName] = useState('');
+  const [savedConfigs, setSavedConfigs] = useState([]);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
+  const [isLoading, setIsLoading] = useState(false);
   const { userId, isLoadingUserId } = useUser();
 
   useEffect(() => {
-    fetchConfig();
-  }, []);
+    if (userId) {
+      fetchSavedConfigs();
+    }
+  }, [userId]);
 
-  const fetchConfig = async () => {
+  const fetchSavedConfigs = async () => {
+    setIsLoading(true);
     try {
       const res = await axios.get('/api/nginx', { headers: { 'X-User-Id': userId } });
-      setConfig(res.data.config);
+      setSavedConfigs(res.data.configs);
     } catch (error) {
-      console.error('Failed to fetch Nginx config:', error);
-    }
-  };
-
-  const saveConfig = async () => {
-    try {
-      await axios.post('/api/nginx', { config });
-      alert('Nginx configuration saved successfully');
-    } catch (error) {
-      alert('Failed to save Nginx configuration: ' + error.response.data.error);
+      console.error('Failed to fetch saved configs:', error);
+      showSnackbar('Failed to fetch saved configurations: ' + (error.response?.data?.error || error.message), 'error');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -85,32 +81,107 @@ export default function NginxConfig() {
     setSelectedSample(event.target.value);
     setConfig(sampleConfigs[event.target.value]);
   };
+
+  const saveConfig = async () => {
+    if (!configName.trim()) {
+      showSnackbar('Please enter a name for the configuration', 'warning');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const res = await axios.post('/api/nginx?action=save', { name: configName, config }, { headers: { 'X-User-Id': userId } });
+      showSnackbar(res.data.message, 'success');
+      fetchSavedConfigs();
+    } catch (error) {
+      showSnackbar('Failed to save configuration: ' + (error.response?.data?.error || error.message), 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadConfig = async (name) => {
+    if (!name) {
+      showSnackbar('Please select a configuration to load', 'warning');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const res = await axios.post('/api/nginx?action=load', { name }, { headers: { 'X-User-Id': userId } });
+      setConfig(res.data.config);
+      setConfigName(name);
+      showSnackbar('Configuration loaded successfully', 'success');
+    } catch (error) {
+      showSnackbar('Failed to load configuration: ' + (error.response?.data?.error || error.message), 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const applyConfig = async () => {
+    setIsLoading(true);
+    try {
+      const res = await axios.post('/api/nginx?action=apply', { config }, { headers: { 'X-User-Id': userId } });
+      showSnackbar(res.data.message, 'success');
+    } catch (error) {
+      showSnackbar('Failed to apply configuration: ' + (error.response?.data?.error || error.message), 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const showSnackbar = (message, severity = 'info') => {
+    setSnackbar({ open: true, message, severity });
+  };
+
+  const handleCloseSnackbar = (event, reason) => {
+    if (reason === 'clickaway') {
+      return;
+    }
+    setSnackbar({ ...snackbar, open: false });
+  };
+
   if (isLoadingUserId) {
-    return <p>Loading...</p>;
+    return <Typography>Loading...</Typography>;
   }
 
   return (
     <Box sx={{ maxWidth: 800, margin: 'auto', mt: 4 }}>
       <Typography variant="h4" gutterBottom>
-        Nginx Configuration
+        Nginx Configuration Manager
       </Typography>
-      <Select
-        value={selectedSample}
-        onChange={handleSampleChange}
-        displayEmpty
-        fullWidth
-        sx={{ mb: 2 }}
-      >
-        <MenuItem value="">
-          <em>Select a sample configuration</em>
-        </MenuItem>
-        <MenuItem value="basic">Basic HTTP Server</MenuItem>
-        <MenuItem value="php">PHP Server</MenuItem>
-        <MenuItem value="nodejs">Node.js Proxy</MenuItem>
-      </Select>
+      <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+        <Select
+          value={selectedSample}
+          onChange={handleSampleChange}
+          displayEmpty
+          fullWidth
+          disabled={isLoading}
+        >
+          <MenuItem value="">
+            <em>Select a sample configuration</em>
+          </MenuItem>
+          <MenuItem value="basic">Basic HTTP Server</MenuItem>
+          <MenuItem value="php">PHP Server</MenuItem>
+          <MenuItem value="nodejs">Node.js Proxy</MenuItem>
+        </Select>
+        <Select
+          value={configName}
+          onChange={(e) => loadConfig(e.target.value)}
+          displayEmpty
+          fullWidth
+          disabled={isLoading}
+        >
+          <MenuItem value="">
+            <em>Load saved configuration</em>
+          </MenuItem>
+          {savedConfigs.map((cfg) => (
+            <MenuItem key={cfg.name} value={cfg.name}>{cfg.name}</MenuItem>
+          ))}
+        </Select>
+      </Box>
       <AceEditor
         mode="nginx"
-        theme="monokai"
+        theme="github"
         onChange={setConfig}
         value={config}
         name="nginx-config-editor"
@@ -118,11 +189,30 @@ export default function NginxConfig() {
         setOptions={{
           useWorker: false
         }}
-        style={{ width: '100%', height: '400px' }}
+        style={{ width: '100%', height: '400px', marginBottom: '16px' }}
+        readOnly={isLoading}
       />
-      <Button variant="contained" onClick={saveConfig} sx={{ mt: 2 }}>
-        Save Configuration
+      <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+        <TextField
+          label="Configuration Name"
+          variant="outlined"
+          value={configName}
+          onChange={(e) => setConfigName(e.target.value)}
+          fullWidth
+          disabled={isLoading}
+        />
+        <Button variant="contained" onClick={saveConfig} disabled={isLoading}>
+          {isLoading ? <CircularProgress size={24} /> : 'Save Configuration'}
+        </Button>
+      </Box>
+      <Button variant="contained" color="primary" onClick={applyConfig} fullWidth disabled={isLoading}>
+        {isLoading ? <CircularProgress size={24} /> : 'Apply Configuration'}
       </Button>
+      <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={handleCloseSnackbar}>
+        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
