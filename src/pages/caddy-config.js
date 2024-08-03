@@ -5,6 +5,7 @@ import AceEditor from 'react-ace';
 import 'ace-builds/src-noconflict/mode-json';
 import 'ace-builds/src-noconflict/theme-monokai';
 import axios from 'axios';
+import { useUser } from '@/UserContext';
 
 export default function CaddyConfig() {
   const [config, setConfig] = useState('');

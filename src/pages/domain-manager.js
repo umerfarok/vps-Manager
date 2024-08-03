@@ -14,7 +14,7 @@ import {
 } from '@mui/material';
 import { Delete as DeleteIcon } from '@mui/icons-material';
 import { styled } from '@mui/system';
-import { useUser } from './UserContext';
+import { useUser } from '../UserContext';
 
 const StyledPaper = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(3),

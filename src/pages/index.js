@@ -9,7 +9,7 @@ import { styled } from '@mui/system';
 import Link from 'next/link';
 import axios from 'axios';
 import { Computer, HardDrive, Globe, Shield, Settings, Server, Cloud, PowerOff } from 'lucide-react';
-import { useUser } from './UserContext';
+import { useUser } from '../UserContext';
 
 const StyledCard = styled(Card)(({ theme }) => ({
   height: '100%',

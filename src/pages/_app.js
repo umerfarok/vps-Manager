@@ -1,5 +1,5 @@
 import { createTheme, ThemeProvider } from '@mui/material/styles';
-import { UserProvider } from './UserContext';
+import { UserProvider } from '../UserContext';
 
 const theme = createTheme({
   palette: {

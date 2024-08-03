@@ -10,7 +10,7 @@ import {
 } from '@mui/icons-material';
 import axios from 'axios';
 import { Editor } from '@monaco-editor/react';
-import { useUser } from './UserContext';
+import { useUser } from '../UserContext';
 
 export default function FileManager() {
   const [files, setFiles] = useState([]);

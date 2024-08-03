@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Box, Typography, TextField, Button, List, ListItem, ListItemText } from '@mui/material';
 import axios from 'axios';
-import { useUser } from './UserContext';
+import { useUser } from '../UserContext';
 
 export default function SSLManager() {
   const [domain, setDomain] = useState('');

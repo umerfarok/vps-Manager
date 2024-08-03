@@ -4,7 +4,7 @@ import AceEditor from 'react-ace';
 import 'ace-builds/src-noconflict/mode-nginx';
 import 'ace-builds/src-noconflict/theme-monokai';
 import axios from 'axios';
-import { useUser } from './UserContext';
+import { useUser } from '../UserContext';
 
 const sampleConfigs = {
   basic: `
