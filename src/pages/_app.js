@@ -1,5 +1,6 @@
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { UserProvider } from '../UserContext';
+import Head from 'next/head';
 
 const theme = createTheme({
   palette: {
@@ -39,11 +40,17 @@ const theme = createTheme({
 
 function MyApp({ Component, pageProps }) {
   return (
-    <ThemeProvider theme={theme}>
+    <>
+      <Head>
+        <title>Vps Manager</title>
+        <meta name="description" content="This is my Next.js application" />
+      </Head>
+        <ThemeProvider theme={theme}>
       <UserProvider>
       <Component {...pageProps} />
       </UserProvider>
     </ThemeProvider>
+    </>
   );
 }
 
