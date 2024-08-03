@@ -54,80 +54,29 @@ const LoaderOverlay = styled(Box)(({ theme }) => ({
 
 export default function Home() {
   const { userId, isLoadingUserId } = useUser();
-  const { connection, isConnected, connect, disconnect, setConnection } = useConnection(userId);
-
-  const [loading, setLoading] = useState(false);
-  const [setupLoading, setSetupLoading] = useState({
-    nginx: false,
-    'nginx-certbot': false,
-    caddy: false
-  });
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
+  const {
+    connection,
+    isConnected,
+    connect,
+    disconnect,
+    setConnection,
+    loading,
+    setupLoading,
+    snackbar,
+    setSnackbar,
+    handleConnect,
+    handleDisconnect,
+    handleQuickSetup,
+    handleCloseSnackbar,
+    checkConnection
+  } = useConnection(userId);
 
   useEffect(() => {
-    if (userId && !isConnected) {
-      checkConnection(userId);
+    if (userId) {
+      checkConnection();
     }
-  }, [userId, isConnected]);
+  }, [userId, checkConnection]);
 
-  const checkConnection = async (userId) => {
-    try {
-      const res = await axios.get('/api/check-connection', { headers: { 'x-user-Id': userId } });
-      if (res.data.connected) {
-        connect(res.data.connection);
-      }
-    } catch (error) {
-      console.error('Error checking connection:', error);
-    }
-  };
-
-  const handleConnect = async () => {
-    try {
-      setLoading(true);
-      await connect(connection);
-      setSnackbar({ open: true, message: 'Connected successfully', severity: 'success' });
-    } catch (error) {
-      setSnackbar({ open: true, message: 'Connection failed: ' + error.message, severity: 'error' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDisconnect = async () => {
-    try {
-      setLoading(true);
-      await disconnect();
-      setSnackbar({ open: true, message: 'Disconnected successfully', severity: 'success' });
-    } catch (error) {
-      setSnackbar({ open: true, message: 'Disconnection failed: ' + error.message, severity: 'error' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickSetup = async (type) => {
-    if (!isConnected) {
-      setSnackbar({ open: true, message: 'Please connect to your VPS first', severity: 'warning' });
-      return;
-    }
-
-    try {
-      setSetupLoading({ ...setupLoading, [type]: true });
-      const res = await axios.post('/api/quick-setup', { setupType: type }, { headers: { 'x-user-Id': userId } });
-      setSnackbar({ open: true, message: res.data.message, severity: 'success' });
-    } catch (error) {
-      setSnackbar({ open: true, message: 'Setup failed: ' + error.response.data.error, severity: 'error' });
-    } finally {
-      setSetupLoading({ ...setupLoading, [type]: false });
-    }
-  };
-
-  const handleCloseSnackbar = (event, reason) => {
-    if (reason === 'clickaway') {
-      return;
-    }
-    setSnackbar({ ...snackbar, open: false });
-  };
 
   if (isLoadingUserId) {
     return (
