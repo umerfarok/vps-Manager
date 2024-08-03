@@ -2,11 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Button, TextField, Dialog, DialogTitle, DialogContent, DialogActions,
   List, ListItem, ListItemIcon, ListItemText, IconButton, Menu, MenuItem, Breadcrumbs, Link,
-  Grid, Paper, Divider, Tooltip, CircularProgress, Snackbar, Alert
+  Grid, Paper, Divider, Tooltip, CircularProgress, Snackbar, Alert, AppBar, Toolbar
 } from '@mui/material';
 import {
   Folder, InsertDriveFile, ArrowUpward, CreateNewFolder, NoteAdd, Refresh, MoreVert,
-  Edit, Delete, FileCopy, Download, Upload
+  Edit, Delete, FileCopy, Download, Upload, Save, Cancel
 } from '@mui/icons-material';
 import axios from 'axios';
 import { Editor } from '@monaco-editor/react';
@@ -28,6 +28,7 @@ export default function FileManager() {
   const [newFileName, setNewFileName] = useState('');
   const [newFileContent, setNewFileContent] = useState('');
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
+  const [isEditMode, setIsEditMode] = useState(false);
   const { userId, isLoadingUserId } = useUser();
 
   const showSnackbar = (message, severity = 'info') => {
@@ -62,26 +63,34 @@ export default function FileManager() {
       fetchFiles(currentPath);
     }
   }, [fetchFiles, currentPath, userId]);
-
   const handleFileClick = async (file) => {
-    debugger
     if (file.type === 'directory') {
       setCurrentPath(prevPath => `${prevPath}${file.name}/`);
     } else {
       setSelectedFile(file);
-      setDialogAction('edit');
       setIsLoading(true);
       try {
-        const res = await axios.get(`/api/files?path=${encodeURIComponent(currentPath + file.name)}&action=read&filename=${encodeURIComponent(file.name)}`, { headers: { 'x-user-id': userId } });        setFileContent(res.data.content);
-        setIsDialogOpen(true);
+        console.log(`Fetching file: ${currentPath}${file.name}`);
+        const res = await axios.get(`/api/files`, {
+          params: {
+            path: `${currentPath}${file.name}`,
+            action: 'read',
+            filename: file.name
+          },
+          headers: { 'x-user-id': userId }
+        });
+        console.log('File content received:', res.data);
+        setFileContent(res.data.content);
+        setIsEditMode(true);
       } catch (error) {
-        console.error('Failed to read file:', error);
-        showSnackbar('Failed to read file', 'error');
+        console.error('Failed to read file:', error.response ? error.response.data : error.message);
+        showSnackbar(`Failed to read file: ${error.response ? error.response.data.error : error.message}`, 'error');
       } finally {
         setIsLoading(false);
       }
     }
   };
+
 
   const handleNewItem = (type) => {
     if (type === 'file') {
@@ -107,18 +116,12 @@ export default function FileManager() {
 
   const handleDialogConfirm = async () => {
     try {
-      if (dialogAction === 'directory' || dialogAction === 'file') {
+      if (dialogAction === 'directory') {
         await axios.post('/api/files',
           { name: newItemName, type: dialogAction, path: currentPath },
           { headers: { 'x-user-id': userId } }
         );
         showSnackbar(`${dialogAction} created successfully`, 'success');
-      } else if (dialogAction === 'edit') {
-        await axios.put('/api/files',
-          { name: selectedFile.name, content: fileContent, path: currentPath },
-          { headers: { 'x-user-id': userId } }
-        );
-        showSnackbar('File updated successfully', 'success');
       } else if (dialogAction === 'delete') {
         await axios.delete('/api/files',
           { data: { name: selectedFile.name, path: currentPath } },
@@ -187,7 +190,7 @@ export default function FileManager() {
 
   const handleDownload = async () => {
     try {
-      const response = await axios.get(`/api/files?path=${encodeURIComponent(currentPath + selectedFile.name)}&action=download`, {
+      const response = await axios.get(`/api/files?path=${encodeURIComponent(currentPath + selectedFile.name)}&action=download&filename=${encodeURIComponent(selectedFile.name)}`, {
         responseType: 'blob',
         headers: { 'x-user-id': userId }
       });
@@ -228,6 +231,26 @@ export default function FileManager() {
     }
   };
 
+  const handleSaveFile = async () => {
+    try {
+      await axios.put('/api/files',
+        { name: selectedFile.name, content: fileContent, path: currentPath },
+        { headers: { 'x-user-id': userId } }
+      );
+      showSnackbar('File updated successfully', 'success');
+      setIsEditMode(false);
+    } catch (error) {
+      console.error('Failed to save file:', error);
+      showSnackbar('Failed to save file', 'error');
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditMode(false);
+    setSelectedFile(null);
+    setFileContent('');
+  };
+
   const renderBreadcrumbs = () => {
     const pathParts = currentPath.split('/').filter(Boolean);
     return (
@@ -258,72 +281,105 @@ export default function FileManager() {
   }
 
   return (
-    <Box sx={{ maxWidth: 800, margin: 'auto', mt: 4 }}>
-      <Typography variant="h4" gutterBottom>
-        File Manager
-      </Typography>
-      <Paper elevation={3} sx={{ p: 2, mb: 2 }}>
-        {renderBreadcrumbs()}
-      </Paper>
-      <Grid container spacing={2} sx={{ mb: 2 }}>
-        <Grid item>
-          <Button startIcon={<ArrowUpward />} onClick={handleGoUp} disabled={currentPath === '/'}>
-            Go Up
-          </Button>
-        </Grid>
-        <Grid item>
-          <Button startIcon={<CreateNewFolder />} onClick={() => handleNewItem('directory')}>New Folder</Button>
-        </Grid>
-        <Grid item>
-          <Button startIcon={<NoteAdd />} onClick={() => handleNewItem('file')}>New File</Button>
-        </Grid>
-        <Grid item>
-          <Button startIcon={<Refresh />} onClick={() => fetchFiles(currentPath)}>Refresh</Button>
-        </Grid>
-        <Grid item>
-          <Button
-            component="label"
-            startIcon={<Upload />}
-          >
-            Upload File
-            <input
-              type="file"
-              hidden
-              onChange={handleUpload}
-            />
-          </Button>
-        </Grid>
-      </Grid>
-      <Paper elevation={3}>
-        <List>
-          <ListItem>
-            <ListItemIcon></ListItemIcon>
-            <ListItemText primary={<Button onClick={() => handleSort('name')}>Name {sortBy === 'name' && (sortDirection === 'asc' ? '▲' : '▼')}</Button>} />
-            <ListItemText primary={<Button onClick={() => handleSort('size')}>Size {sortBy === 'size' && (sortDirection === 'asc' ? '▲' : '▼')}</Button>} />
-            <ListItemText primary={<Button onClick={() => handleSort('lastModified')}>Last Modified {sortBy === 'lastModified' && (sortDirection === 'asc' ? '▲' : '▼')}</Button>} />
-          </ListItem>
-          <Divider />
-          {isLoading ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
-              <CircularProgress />
-            </Box>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      <AppBar position="static">
+        <Toolbar>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+            File Manager
+          </Typography>
+        </Toolbar>
+      </AppBar>
+      <Box sx={{ flexGrow: 1, display: 'flex', p: 2 }}>
+        <Paper elevation={3} sx={{ width: '30%', mr: 2, p: 2, overflowY: 'auto' }}>
+          {renderBreadcrumbs()}
+          <Grid container spacing={2} sx={{ my: 2 }}>
+            <Grid item>
+              <Button startIcon={<ArrowUpward />} onClick={handleGoUp} disabled={currentPath === '/'}>
+                Go Up
+              </Button>
+            </Grid>
+            <Grid item>
+              <Button startIcon={<CreateNewFolder />} onClick={() => handleNewItem('directory')}>New Folder</Button>
+            </Grid>
+            <Grid item>
+              <Button startIcon={<NoteAdd />} onClick={() => handleNewItem('file')}>New File</Button>
+            </Grid>
+            <Grid item>
+              <Button startIcon={<Refresh />} onClick={() => fetchFiles(currentPath)}>Refresh</Button>
+            </Grid>
+            <Grid item>
+              <Button
+                component="label"
+                startIcon={<Upload />}
+              >
+                Upload File
+                <input
+                  type="file"
+                  hidden
+                  onChange={handleUpload}
+                />
+              </Button>
+            </Grid>
+          </Grid>
+          <List>
+            <ListItem>
+              <ListItemText primary={<Button onClick={() => handleSort('name')}>Name {sortBy === 'name' && (sortDirection === 'asc' ? '▲' : '▼')}</Button>} />
+              <ListItemText primary={<Button onClick={() => handleSort('size')}>Size {sortBy === 'size' && (sortDirection === 'asc' ? '▲' : '▼')}</Button>} />
+              <ListItemText primary={<Button onClick={() => handleSort('lastModified')}>Modified {sortBy === 'lastModified' && (sortDirection === 'asc' ? '▲' : '▼')}</Button>} />
+            </ListItem>
+            <Divider />
+            {isLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                <CircularProgress />
+              </Box>
+            ) : (
+              files.map((file, index) => (
+                <ListItem key={index} button onClick={() => handleFileClick(file)}>
+                  <ListItemIcon>
+                    {file.type === 'directory' ? <Folder /> : <InsertDriveFile />}
+                  </ListItemIcon>
+                  <ListItemText primary={file.name} secondary={`${file.size} | ${file.lastModified}`} />
+                  <IconButton onClick={(e) => handleMenuOpen(e, file)}>
+                    <MoreVert />
+                  </IconButton>
+                </ListItem>
+              ))
+            )}
+          </List>
+        </Paper>
+        <Paper elevation={3} sx={{ flexGrow: 1, p: 2, display: 'flex', flexDirection: 'column' }}>
+          {isEditMode ? (
+            <>
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="h6">{selectedFile?.name}</Typography>
+                <Button startIcon={<Save />} onClick={handleSaveFile} sx={{ mr: 1 }}>Save</Button>
+                <Button startIcon={<Cancel />} onClick={handleCancelEdit}>Cancel</Button>
+              </Box>
+              <Box sx={{ flexGrow: 1 }}>
+                {isLoading ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+                    <CircularProgress />
+                  </Box>
+                ) : (
+                  <Editor
+                    height="100%"
+                    language="javascript"
+                    value={fileContent}
+                    onChange={setFileContent}
+                    options={{
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      fontSize: 14,
+                    }}
+                  />
+                )}
+              </Box>
+            </>
           ) : (
-            files.map((file, index) => (
-              <ListItem key={index} button onClick={() => handleFileClick(file)}>
-                <ListItemIcon>
-                  {file.type === 'directory' ? <Folder /> : <InsertDriveFile />}
-                </ListItemIcon>
-                <ListItemText primary={file.name} />
-                <ListItemText primary={file.size} />
-                <ListItemText primary={file.lastModified} />
-                <IconButton onClick={(e) => handleMenuOpen(e, file)}>
-                  <MoreVert />
-                </IconButton>
-              </ListItem>
-            ))
+            <Typography variant="body1">Select a file to edit</Typography>
           )}
-        </List>
-      </Paper>
+        </Paper>
+      </Box>
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
@@ -336,20 +392,9 @@ export default function FileManager() {
         )}
       </Menu>
       <Dialog open={isDialogOpen} onClose={handleDialogClose}>
-        <DialogTitle>{dialogAction === 'edit' ? 'Edit File' : dialogAction === 'delete' ? 'Delete Item' : dialogAction === 'rename' ? 'Rename Item' : `New ${dialogAction}`}</DialogTitle>
+        <DialogTitle>{dialogAction === 'delete' ? 'Delete Item' : dialogAction === 'rename' ? 'Rename Item' : `New ${dialogAction}`}</DialogTitle>
         <DialogContent>
-          {dialogAction === 'edit' ? (
-            <TextField
-              autoFocus
-              margin="dense"
-              label="File Content"
-              fullWidth
-              multiline
-              rows={4}
-              value={fileContent}
-              onChange={(e) => setFileContent(e.target.value)}
-            />
-          ) : dialogAction === 'delete' ? (
+          {dialogAction === 'delete' ? (
             <Typography>Are you sure you want to delete {selectedFile?.name}?</Typography>
           ) : (
             <TextField
@@ -373,7 +418,8 @@ export default function FileManager() {
         handleConfirm={handleNewFileConfirm}
         setNewFileName={setNewFileName}
         setNewFileContent={setNewFileContent}
-      /><Snackbar open={snackbar.open} autoHideDuration={6000} onClose={closeSnackbar}>
+      />
+      <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={closeSnackbar}>
         <Alert onClose={closeSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
           {snackbar.message}
         </Alert>
@@ -399,19 +445,18 @@ const NewFileDialog = ({ isOpen, handleClose, handleConfirm, setNewFileName, set
           onChange={(e) => setNewFileName(e.target.value)}
           sx={{ mb: 2 }}
         />
-        <div style={{ height: '500px', width: '100%' }}>
+        <Box sx={{ height: 400 }}>
           <Editor
             height="100%"
-            width="100%"
-            language="javascript" 
+            language="javascript"
             onChange={handleEditorChange}
             options={{
-              selectOnLineNumbers: true,
-              lineNumbers: 'on',
-              fontFamily: 'monospace',
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              fontSize: 14,
             }}
           />
-        </div>
+        </Box>
       </DialogContent>
       <DialogActions>
         <Button onClick={handleClose}>Cancel</Button>

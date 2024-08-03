@@ -38,16 +38,18 @@ export default async function handler(req, res) {
     res.status(500).json({ error: 'Internal server error' });
   }
 }
-
 async function handleGetRequest(userId, currentPath, query, res) {
   const { sortBy = 'name', sortDirection = 'asc' } = query;
-  const { code, data } = await sshManager.executeCommand(userId, `ls -la "${currentPath}"`);
+  console.log('Listing directory:', currentPath);
+
+  const { code, data, stderr } = await sshManager.executeCommand(userId, `ls -la "${currentPath}"`);
   if (code === 0) {
     let files = parseFileList(data);
     files = sortFiles(files, sortBy, sortDirection);
     res.status(200).json({ files, currentPath });
   } else {
-    res.status(500).json({ error: 'Failed to list files' });
+    console.error(`Failed to list files: ${stderr}`);
+    res.status(500).json({ error: 'Failed to list files', details: stderr });
   }
 }
 
@@ -143,15 +145,38 @@ async function handleDownload(userId, currentPath, filename, res) {
     res.status(500).json({ error: 'Failed to download file' });
   }
 }
+function normalizePath(inputPath) {
+  // Convert Windows-style paths to Unix-style
+  let normalizedPath = inputPath.replace(/\\/g, '/');
 
+  // Ensure the path starts with a forward slash
+  if (!normalizedPath.startsWith('/')) {
+    normalizedPath = '/' + normalizedPath;
+  }
 
+  // Remove any double slashes
+  normalizedPath = normalizedPath.replace(/\/+/g, '/');
+
+  // Remove trailing slash if present, unless it's the root directory
+  if (normalizedPath.length > 1 && normalizedPath.endsWith('/')) {
+    normalizedPath = normalizedPath.slice(0, -1);
+  }
+
+  return normalizedPath;
+}
 async function handleReadFile(userId, currentPath, filename, res) {
   if (!filename) {
     return res.status(400).json({ error: 'Filename is required' });
   }
 
-  const fullPath = path.join(currentPath);
-console.log(fullPath);
+  // Remove the filename from the currentPath if it's already included
+  const basePath = currentPath.endsWith(filename)
+    ? path.posix.dirname(currentPath)
+    : currentPath;
+
+  const fullPath = path.posix.join(basePath, filename);
+  console.log('Reading file:', fullPath);
+
   try {
     const { code, data, stderr } = await sshManager.executeCommand(userId, `cat "${fullPath}"`);
     if (code === 0) {
