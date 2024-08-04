@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Box, Typography, TextField, Button, List, ListItem, ListItemText, ListItemSecondaryAction, IconButton, Paper, Snackbar, CircularProgress } from '@mui/material';
 import { Delete as DeleteIcon, Refresh as RefreshIcon } from '@mui/icons-material';
 import axios from 'axios';
-import { useUser } from '../UserContext';
+import { useUser } from '@/UserContext';
+
 
 export default function SSLManager() {
   const [domain, setDomain] = useState('');
