@@ -1,61 +1,84 @@
-"use client";
 import React, { useState, useEffect, useRef } from 'react';
-import {
-    Box, Typography, Button, Paper, List, ListItem, ListItemText,
-    IconButton, Tooltip, TextField, AppBar, Toolbar, Drawer,
-    ListItemIcon, Divider, CircularProgress, LinearProgress
-} from '@mui/material';
-import {
-    Terminal as TerminalIcon, ContentCopy, Clear, Code,
-    Info, Settings, Refresh, Send, Memory, Storage
-} from '@mui/icons-material';
+import { Box, Typography, Paper, AppBar, Toolbar, IconButton, Drawer, List, ListItem, ListItemIcon, ListItemText, Divider, LinearProgress } from '@mui/material';
+import { Code, Refresh, Info, Settings, Memory, Storage } from '@mui/icons-material';
 import axios from 'axios';
 import { useUser } from '@/UserContext';
-import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { atomOneDark } from 'react-syntax-highlighter/dist/cjs/styles/hljs';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import bash from 'react-syntax-highlighter/dist/esm/languages/hljs/bash';
+import dynamic from 'next/dynamic';
 
-
-SyntaxHighlighter.registerLanguage('bash', bash);
+const Terminal = dynamic(() => import('xterm').then((mod) => mod.Terminal), { ssr: false });
+const FitAddon = dynamic(() => import('xterm-addon-fit').then((mod) => mod.FitAddon), { ssr: false });
+const WebLinksAddon = dynamic(() => import('xterm-addon-web-links').then((mod) => mod.WebLinksAddon), { ssr: false });
 
 const VPSManager = () => {
-    const [command, setCommand] = useState('');
-    const [output, setOutput] = useState([]);
-    const [suggestions, setSuggestions] = useState([]);
-    const [history, setHistory] = useState([]);
-    const [historyIndex, setHistoryIndex] = useState(-1);
-    const [isLoading, setIsLoading] = useState(false);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [serverInfo, setServerInfo] = useState(null);
-    const outputRef = useRef(null);
+    const [currentDirectory, setCurrentDirectory] = useState('/home/user');
     const { userId } = useUser();
+    const terminalRef = useRef(null);
+    const terminalInstance = useRef(null);
+    const fitAddon = useRef(null);
+    const currentLineBuffer = useRef('');
+    const [isClient, setIsClient] = useState(false);
 
     useEffect(() => {
-        if (outputRef.current) {
-            outputRef.current.scrollTop = outputRef.current.scrollHeight;
-        }
-    }, [output]);
+        setIsClient(true);
+        const timer = setTimeout(() => {
+            initializeTerminal();
+        }, 100);
 
-    useEffect(() => {
-        fetchSuggestions();
         fetchServerInfo();
+        window.addEventListener('resize', handleResize);
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            if (terminalInstance.current) {
+                terminalInstance.current.dispose();
+            }
+            clearTimeout(timer);
+        };
     }, []);
 
-    const fetchSuggestions = async () => {
-        try {
-            const response = await axios.get('/api/terminal', { headers: { 'x-user-id': userId } });
-            setSuggestions(response.data.suggestions);
-        } catch (error) {
-            console.error('Failed to fetch suggestions:', error);
-            toast.error('Failed to fetch command suggestions');
+    const initializeTerminal = () => {
+        if (terminalRef.current && !terminalInstance.current) {
+            terminalInstance.current = new Terminal({
+                cursorBlink: true,
+                fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+                fontSize: 14,
+                theme: {
+                    background: '#1e1e1e',
+                    foreground: '#d4d4d4',
+                },
+            });
+
+            fitAddon.current = new FitAddon();
+            terminalInstance.current.loadAddon(fitAddon.current);
+            terminalInstance.current.loadAddon(new WebLinksAddon());
+
+            terminalInstance.current.open(terminalRef.current);
+            fitAddon.current.fit();
+
+            terminalInstance.current.writeln('Welcome to VPS Manager Terminal');
+            terminalInstance.current.writeln('Type "help" for a list of available commands');
+            promptUser();
+
+            terminalInstance.current.onKey(handleKeyPress);
+            terminalInstance.current.onData(handleTerminalData);
+        }
+    };
+
+    const handleResize = () => {
+        if (fitAddon.current) {
+            fitAddon.current.fit();
         }
     };
 
     const fetchServerInfo = async () => {
         try {
-            const response = await axios.get('/api/terminal?info=server', { headers: { 'x-user-id': userId } });
+            const response = await axios.get('/api/terminal?info=server', {
+                headers: { 'x-user-id': userId },
+                timeout: 5000
+            });
             setServerInfo(response.data);
         } catch (error) {
             console.error('Failed to fetch server info:', error);
@@ -63,67 +86,132 @@ const VPSManager = () => {
         }
     };
 
-    const handleCommandSubmit = async (e) => {
-        e.preventDefault();
-        if (!command.trim()) return;
+    const promptUser = () => {
+        terminalInstance.current.write(`\r\n\x1b[32muser@vps\x1b[0m:\x1b[34m${currentDirectory}\x1b[0m$ `);
+    };
 
-        setOutput(prev => [...prev, { type: 'command', content: command }]);
-        setHistory(prev => [command, ...prev]);
-        setHistoryIndex(-1);
-        setCommand('');
-        setIsLoading(true);
+    const handleKeyPress = (e) => {
+        const printable = !e.domEvent.altKey && !e.domEvent.ctrlKey && !e.domEvent.metaKey;
 
-        try {
-            const response = await axios.post('/api/terminal', { command }, { headers: { 'x-user-id': userId } });
-            if (response.data.output) {
-                setOutput(prev => [...prev, { type: 'output', content: response.data.output }]);
+        if (e.domEvent.keyCode === 13) { // Enter key
+            const command = currentLineBuffer.current.trim();
+            currentLineBuffer.current = '';
+            handleCommand(command);
+        } else if (e.domEvent.keyCode === 9) { // Tab key
+            e.domEvent.preventDefault();
+            handleTabCompletion();
+        }
+    };
+
+    const handleTerminalData = (data) => {
+        const ord = data.charCodeAt(0);
+        if (ord < 32 || ord === 127) { // Control characters
+            switch (data) {
+                case '\u0003': // Ctrl+C
+                    terminalInstance.current.write('^C');
+                    promptUser();
+                    currentLineBuffer.current = '';
+                    break;
+                case '\u007F': // Backspace
+                    if (currentLineBuffer.current.length > 0) {
+                        currentLineBuffer.current = currentLineBuffer.current.slice(0, -1);
+                        terminalInstance.current.write('\b \b');
+                    }
+                    break;
             }
-            if (response.data.error) {
-                setOutput(prev => [...prev, { type: 'error', content: response.data.error }]);
+        } else {
+            currentLineBuffer.current += data;
+            terminalInstance.current.write(data);
+        }
+    };
+
+    const handleCommand = async (command) => {
+        terminalInstance.current.writeln('');
+        if (command === '') {
+            promptUser();
+            return;
+        }
+
+        if (command === 'help') {
+            displayHelp();
+        } else if (command.startsWith('cd ')) {
+            await changeDirectory(command.split(' ')[1]);
+        } else {
+            try {
+                const response = await axios.post('/api/terminal', { command, currentDirectory }, {
+                    headers: { 'x-user-id': userId },
+                    timeout: 10000
+                });
+                if (response.data.output) {
+                    terminalInstance.current.writeln(response.data.output);
+                }
+                if (response.data.newDirectory) {
+                    setCurrentDirectory(response.data.newDirectory);
+                }
+            } catch (error) {
+                console.error('Failed to execute command:', error);
+                terminalInstance.current.writeln(`\x1b[31mError: ${error.message}\x1b[0m`);
+            }
+        }
+        promptUser();
+    };
+
+    const handleTabCompletion = async () => {
+        try {
+            const response = await axios.get('/api/terminal', {
+                params: {
+                    command: currentLineBuffer.current,
+                    currentDirectory: currentDirectory
+                },
+                headers: { 'x-user-id': userId },
+                timeout: 5000
+            });
+
+            if (response.data.completions.length === 1) {
+                const completion = response.data.completions[0];
+                const toComplete = completion.slice(currentLineBuffer.current.length);
+                terminalInstance.current.write(toComplete);
+                currentLineBuffer.current += toComplete;
+            } else if (response.data.completions.length > 1) {
+                terminalInstance.current.writeln('');
+                terminalInstance.current.writeln(response.data.completions.join('  '));
+                promptUser();
+                terminalInstance.current.write(currentLineBuffer.current);
             }
         } catch (error) {
-            console.error('Failed to execute command:', error);
-            setOutput(prev => [...prev, { type: 'error', content: 'Failed to execute command: ' + error.message }]);
-            toast.error('Failed to execute command');
-        } finally {
-            setIsLoading(false);
+            console.error('Failed to get completions:', error);
         }
     };
 
-    const handleSuggestionClick = (suggestion) => {
-        setCommand(suggestion);
-    };
-
-    const handleKeyDown = (e) => {
-        if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            setHistoryIndex(prevIndex => {
-                const newIndex = Math.min(prevIndex + 1, history.length - 1);
-                setCommand(history[newIndex] || '');
-                return newIndex;
+    const changeDirectory = async (newDir) => {
+        try {
+            const response = await axios.post('/api/terminal', { command: `cd ${newDir} && pwd`, currentDirectory }, {
+                headers: { 'x-user-id': userId },
+                timeout: 5000
             });
-        } else if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            setHistoryIndex(prevIndex => {
-                const newIndex = Math.max(prevIndex - 1, -1);
-                setCommand(history[newIndex] || '');
-                return newIndex;
-            });
+            if (response.data.newDirectory) {
+                setCurrentDirectory(response.data.newDirectory);
+            } else {
+                terminalInstance.current.writeln(`cd: ${newDir}: No such file or directory`);
+            }
+        } catch (error) {
+            console.error('Failed to change directory:', error);
+            terminalInstance.current.writeln(`\x1b[31mError: ${error.message}\x1b[0m`);
         }
     };
 
-    const copyToClipboard = (text) => {
-        navigator.clipboard.writeText(text).then(() => {
-            toast.success('Copied to clipboard');
-        }, (err) => {
-            console.error('Failed to copy: ', err);
-            toast.error('Failed to copy to clipboard');
-        });
-    };
-
-    const clearTerminal = () => {
-        setOutput([]);
-        toast.info('Terminal cleared');
+    const displayHelp = () => {
+        const helpText = `
+    Available commands:
+      cd <directory>  - Change directory
+      ls              - List files in the current directory
+      pwd             - Print working directory
+      help            - Display this help message
+      clear           - Clear the terminal screen
+    
+    Use Tab for command and path completion.
+        `;
+        terminalInstance.current.writeln(helpText);
     };
 
     return (
@@ -142,11 +230,9 @@ const VPSManager = () => {
                     <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
                         VPS Manager
                     </Typography>
-                    <Tooltip title="Refresh Server Info">
-                        <IconButton color="inherit" onClick={fetchServerInfo}>
-                            <Refresh />
-                        </IconButton>
-                    </Tooltip>
+                    <IconButton color="inherit" onClick={fetchServerInfo}>
+                        <Refresh />
+                    </IconButton>
                 </Toolbar>
             </AppBar>
             <Drawer
@@ -163,7 +249,7 @@ const VPSManager = () => {
                     <List>
                         <ListItem button onClick={() => setIsDrawerOpen(false)}>
                             <ListItemIcon>
-                                <TerminalIcon />
+                                <Code />
                             </ListItemIcon>
                             <ListItemText primary="Terminal" />
                         </ListItem>
@@ -251,109 +337,16 @@ const VPSManager = () => {
             <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
                 <Toolbar />
                 <Paper
-                    ref={outputRef}
                     elevation={3}
                     sx={{
-                        height: 'calc(100vh - 200px)',
-                        mb: 2,
-                        p: 2,
-                        overflowY: 'auto',
-                        backgroundColor: '#1e1e1e',
+                        height: 'calc(100vh - 100px)',
+                        bgcolor: '#1e1e1e',
                         color: '#d4d4d4',
-                        fontFamily: 'monospace',
-                        '&::-webkit-scrollbar': {
-                            width: '0.4em'
-                        },
-                        '&::-webkit-scrollbar-track': {
-                            boxShadow: 'inset 0 0 6px rgba(0,0,0,0.00)',
-                            webkitBoxShadow: 'inset 0 0 6px rgba(0,0,0,0.00)'
-                        },
-                        '&::-webkit-scrollbar-thumb': {
-                            backgroundColor: 'rgba(0,0,0,.1)',
-                            outline: '1px solid slategrey'
-                        }
+                        overflow: 'hidden',
                     }}
                 >
-                    {output.map((item, index) => (
-                        <Box key={index} sx={{ mb: 1, position: 'relative' }}>
-                            {item.type === 'command' && (
-                                <SyntaxHighlighter language="bash" style={atomOneDark} customStyle={{ background: 'transparent', padding: 0 }}>
-                                    {`$ ${item.content}`}
-                                </SyntaxHighlighter>
-                            )}
-                            {item.type === 'output' && (
-                                <Typography sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                                    {item.content}
-                                </Typography>
-                            )}
-                            {item.type === 'error' && (
-                                <Typography sx={{ color: '#f44336', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                                    {item.content}
-                                </Typography>
-                            )}
-                            <Tooltip title="Copy to Clipboard">
-                                <IconButton
-                                    onClick={() => copyToClipboard(item.content)}
-                                    sx={{ position: 'absolute', top: 0, right: 0, color: '#d4d4d4' }}
-                                >
-                                    <ContentCopy fontSize="small" />
-                                </IconButton>
-                            </Tooltip>
-                        </Box>
-                    ))}
-                    {isLoading && (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-                            <CircularProgress />
-                        </Box>
-                    )}
+                    {isClient && <div ref={terminalRef} style={{ width: '100%', height: '100%' }} />}
                 </Paper>
-                <form onSubmit={handleCommandSubmit} style={{ display: 'flex', marginBottom: '1rem' }}>
-                    <TextField
-                        value={command}
-                        onChange={(e) => setCommand(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        variant="outlined"
-                        fullWidth
-                        placeholder="Enter command..."
-                        InputProps={{
-                            style: {
-                                fontFamily: 'monospace',
-                                backgroundColor: '#2c2c2c',
-                                color: '#d4d4d4',
-                            }
-                        }}
-                        sx={{ mr: 1 }}
-                    />
-                    <Button
-                        type="submit"
-                        variant="contained"
-                        disabled={isLoading}
-                        endIcon={<Send />}
-                        sx={{ bgcolor: '#0078d4', '&:hover': { bgcolor: '#106ebe' } }}
-                    >
-                        Execute
-                    </Button>
-                </form>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    <Typography variant="h6" sx={{ color: '#d4d4d4' }}>Suggested Commands:</Typography>
-                    <Tooltip title="Clear Terminal">
-                        <IconButton onClick={clearTerminal} sx={{ color: '#d4d4d4' }}>
-                            <Clear />
-                        </IconButton>
-                    </Tooltip>
-                </Box>
-                <List sx={{ bgcolor: '#2c2c2c', borderRadius: '4px', maxHeight: '200px', overflowY: 'auto' }}>
-                    {suggestions.map((suggestion, index) => (
-                        <ListItem key={index} button onClick={() => handleSuggestionClick(suggestion.command)} sx={{ '&:hover': { bgcolor: '#3c3c3c' } }}>
-                            <ListItemText
-                                primary={suggestion.command}
-                                secondary={suggestion.description}
-                                primaryTypographyProps={{ color: '#d4d4d4' }}
-                                secondaryTypographyProps={{ color: '#a0a0a0' }}
-                            />
-                        </ListItem>
-                    ))}
-                </List>
             </Box>
             <ToastContainer position="bottom-right" theme="dark" />
         </Box>

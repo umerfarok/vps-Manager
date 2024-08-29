@@ -13,8 +13,10 @@ export default async function handler(req, res) {
       case 'GET':
         if (req.query.info === 'server') {
           return await handleGetServerInfo(userId, res);
+        } else if (req.query.command !== undefined) {
+          return await handleTabCompletion(userId, req, res);
         } else {
-          return await handleGetSuggestions(res);
+          return res.status(400).json({ error: 'Invalid GET request' });
         }
       case 'POST':
         return await handleExecuteCommand(userId, req, res);
@@ -24,18 +26,18 @@ export default async function handler(req, res) {
     }
   } catch (error) {
     console.error('Error in VPS Manager API:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 }
 
 async function handleGetServerInfo(userId, res) {
   try {
     const commands = [
-      "echo $(hostname -I | cut -d' ' -f1)", // Get IP address
-      "uptime | awk '{print $2}'", // Get uptime
-      "top -bn1 | grep 'Cpu(s)' | sed 's/.*, *\\([0-9.]*\\)%* id.*/\\1/' | awk '{print 100 - $1}'", // Get CPU usage
-      "free | grep Mem | awk '{print $3/$2 * 100.0}'", // Get memory usage
-      "df -h / | awk 'NR==2 {print $5}' | sed 's/%//'" // Get disk usage
+      "hostname -I | cut -d' ' -f1",
+      "uptime -p",
+      "top -bn1 | grep 'Cpu(s)' | sed 's/.*, *\\([0-9.]*\\)%* id.*/\\1/' | awk '{print 100 - $1}'",
+      "free | grep Mem | awk '{print $3/$2 * 100.0}'",
+      "df -h / | awk 'NR==2 {print $5}' | sed 's/%//'"
     ];
 
     const results = await Promise.all(commands.map(cmd => sshManager.executeCommand(userId, cmd)));
@@ -54,43 +56,63 @@ async function handleGetServerInfo(userId, res) {
     res.status(200).json(serverInfo);
   } catch (error) {
     console.error('Failed to fetch server info:', error);
-    res.status(500).json({ error: 'Failed to fetch server information' });
+    res.status(500).json({ error: 'Failed to fetch server information', details: error.message });
   }
 }
 
-async function handleGetSuggestions(res) {
-  const suggestions = [
-    { command: 'ls -la', description: 'List all files and directories with details' },
-    { command: 'pwd', description: 'Print working directory' },
-    { command: 'mkdir my_website', description: 'Create a new directory for your website' },
-    { command: 'cd my_website', description: 'Change to the website directory' },
-    { command: 'git clone https://github.com/your-repo.git', description: 'Clone a Git repository' },
-    { command: 'npm install', description: 'Install Node.js dependencies' },
-    { command: 'npm start', description: 'Start a Node.js application' },
-    { command: 'sudo apt-get update', description: 'Update package lists' },
-    { command: 'sudo apt-get install nginx', description: 'Install Nginx web server' },
-    { command: 'sudo systemctl start nginx', description: 'Start Nginx service' },
-    { command: 'df -h', description: 'Show disk space usage' },
-    { command: 'top', description: 'Display Linux processes' },
-    { command: 'uname -a', description: 'Show system information' },
-    { command: 'free -m', description: 'Display amount of free and used memory' },
-    { command: 'netstat -tuln', description: 'Show listening ports' },
-  ];
+async function handleTabCompletion(userId, req, res) {
+  const { command, currentDirectory } = req.query;
 
-  res.status(200).json({ suggestions });
+  if (!command || !currentDirectory) {
+    return res.status(400).json({ error: 'Command and currentDirectory are required' });
+  }
+
+  try {
+    // Change to the current directory
+    await sshManager.executeCommand(userId, `cd ${currentDirectory}`);
+
+    // Use the 'compgen' command to get possible completions
+    let completionCommand;
+    if (command.startsWith('cd ')) {
+      // For 'cd' command, complete directories
+      completionCommand = `compgen -d ${command.slice(3)}`;
+    } else {
+      // For other commands, complete both commands and files/directories
+      completionCommand = `compgen -c ${command}; compgen -f ${command}`;
+    }
+
+    const { stdout } = await sshManager.executeCommand(userId, completionCommand);
+
+    const completions = [...new Set(stdout.trim().split('\n').filter(Boolean))];
+    res.status(200).json({ completions });
+  } catch (error) {
+    console.error('Failed to get completions:', error);
+    res.status(500).json({ error: 'Failed to get completions', details: error.message });
+  }
 }
 
 async function handleExecuteCommand(userId, req, res) {
-  const { command } = req.body;
+  const { command, currentDirectory } = req.body;
 
   if (!command) {
     return res.status(400).json({ error: 'Command is required' });
   }
 
   try {
+    // Change to the current directory before executing the command
+    await sshManager.executeCommand(userId, `cd ${currentDirectory}`);
+
     const { code, stdout, stderr } = await sshManager.executeCommand(userId, command);
     const output = stdout || stderr;
-    res.status(200).json({ output, exitCode: code });
+
+    // Check if the command was a 'cd' command and update the current directory
+    let newDirectory = currentDirectory;
+    if (command.trim().startsWith('cd ')) {
+      const pwdResult = await sshManager.executeCommand(userId, 'pwd');
+      newDirectory = pwdResult.stdout.trim();
+    }
+
+    res.status(200).json({ output, exitCode: code, newDirectory });
   } catch (error) {
     console.error('Failed to execute command:', error);
     res.status(500).json({ error: 'Failed to execute command', details: error.message });
