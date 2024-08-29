@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Typography, Button, Select, MenuItem, TextField, Snackbar, CircularProgress } from '@mui/material';
+import { Box, Typography, Button, Select, MenuItem, TextField, Snackbar, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
 import { Alert } from '@mui/material';
 import AceEditor from 'react-ace';
 import 'ace-builds/src-noconflict/mode-nginx';
@@ -57,6 +57,8 @@ export default function NginxConfigManager() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
   const [isLoading, setIsLoading] = useState(false);
   const { userId, isLoadingUserId } = useUser();
+  const [openDialog, setOpenDialog] = useState(false);
+  const [newFileName, setNewFileName] = useState('');
 
   useEffect(() => {
     if (userId) {
@@ -120,10 +122,42 @@ export default function NginxConfigManager() {
   const applyConfig = async () => {
     setIsLoading(true);
     try {
-      const res = await axios.post('/api/nginx?action=apply', { config }, { headers: { 'X-User-Id': userId } });
+      const res = await axios.post('/api/nginx?action=apply', { config, name: configName }, { headers: { 'X-User-Id': userId } });
       showSnackbar(res.data.message, 'success');
     } catch (error) {
       showSnackbar('Failed to apply configuration: ' + (error.response?.data?.error || error.message), 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const deleteConfig = async (name) => {
+    setIsLoading(true);
+    try {
+      const res = await axios.post('/api/nginx?action=delete', { name }, { headers: { 'X-User-Id': userId } });
+      showSnackbar(res.data.message, 'success');
+      fetchSavedConfigs();
+    } catch (error) {
+      showSnackbar('Failed to delete configuration: ' + (error.response?.data?.error || error.message), 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const createNewFile = async () => {
+    if (!newFileName.trim()) {
+      showSnackbar('Please enter a name for the new file', 'warning');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const res = await axios.post('/api/nginx?action=create', { name: newFileName }, { headers: { 'X-User-Id': userId } });
+      showSnackbar(res.data.message, 'success');
+      fetchSavedConfigs();
+      setOpenDialog(false);
+      setNewFileName('');
+    } catch (error) {
+      showSnackbar('Failed to create new file: ' + (error.response?.data?.error || error.message), 'error');
     } finally {
       setIsLoading(false);
     }
@@ -178,6 +212,9 @@ export default function NginxConfigManager() {
             <MenuItem key={cfg.name} value={cfg.name}>{cfg.name}</MenuItem>
           ))}
         </Select>
+        <Button variant="outlined" onClick={() => setOpenDialog(true)} disabled={isLoading}>
+          New File
+        </Button>
       </Box>
       <AceEditor
         mode="nginx"
@@ -205,14 +242,38 @@ export default function NginxConfigManager() {
           {isLoading ? <CircularProgress size={24} /> : 'Save Configuration'}
         </Button>
       </Box>
-      <Button variant="contained" color="primary" onClick={applyConfig} fullWidth disabled={isLoading}>
-        {isLoading ? <CircularProgress size={24} /> : 'Apply Configuration'}
-      </Button>
+      <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+        <Button variant="contained" color="primary" onClick={applyConfig} fullWidth disabled={isLoading}>
+          {isLoading ? <CircularProgress size={24} /> : 'Apply Configuration'}
+        </Button>
+        <Button variant="contained" color="secondary" onClick={() => deleteConfig(configName)} fullWidth disabled={isLoading}>
+          {isLoading ? <CircularProgress size={24} /> : 'Delete Configuration'}
+        </Button>
+      </Box>
       <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={handleCloseSnackbar}>
         <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
           {snackbar.message}
         </Alert>
       </Snackbar>
+      <Dialog open={openDialog} onClose={() => setOpenDialog(false)}>
+        <DialogTitle>Create New File</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="File Name"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={newFileName}
+            onChange={(e) => setNewFileName(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenDialog(false)}>Cancel</Button>
+          <Button onClick={createNewFile}>Create</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

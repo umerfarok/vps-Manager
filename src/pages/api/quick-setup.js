@@ -59,15 +59,28 @@ const windowsSetupScripts = {
 
 const getOS = async (userId) => {
   try {
-    const { code, data } = await sshManager.executeCommand(userId, 'uname -s');
-    if (code === 0) {
-      const os = data.trim().toLowerCase();
-      if (os === 'linux') return 'linux';
-      if (os === 'darwin') return 'macos';
-      if (os.includes('win')) return 'windows';
+    const commands = [
+      'uname -s',
+      'test -f /etc/os-release && echo "Linux"',
+      'test -d /Applications && echo "macOS"',
+      'ver'  // Windows command
+    ];
+
+    for (const command of commands) {
+      const { code, stdout, stderr } = await sshManager.executeCommand(userId, command);
+      console.log(`OS data (${command}):`, { code, stdout, stderr });
+
+      if (code === 0 && stdout) {
+        const osInfo = stdout.toLowerCase().trim();
+        if (osInfo.includes('linux')) return 'linux';
+        if (osInfo.includes('darwin') || osInfo.includes('macos')) return 'macos';
+        if (osInfo.includes('windows')) return 'windows';
+      }
     }
-    throw new Error('Unsupported OS');
+
+    throw new Error('Unable to determine OS or unsupported OS');
   } catch (error) {
+    console.error('Error in getOS:', error);
     throw new Error(`Failed to determine OS: ${error.message}`);
   }
 };
@@ -87,6 +100,7 @@ const checkSystemResources = async (userId) => {
 
     // Check memory
     const { code: memCode, data: memData } = await sshManager.executeCommand(userId, "free -g | awk '/^Mem:/ {print $7}'");
+    console.log('Memory data:', { memCode, memData });
     if (memCode === 0) {
       const freeMemoryGB = parseInt(memData.trim());
       if (freeMemoryGB < 1) {
@@ -138,7 +152,6 @@ const verifyInstallation = async (userId, setupType) => {
   }
   return data;
 };
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -169,11 +182,12 @@ export default async function handler(req, res) {
       throw new Error(`Unsupported operating system: ${os}`);
     }
 
-    // Check system resources
-    await checkSystemResources(userId);
+    // // Check system resources
+    // await checkSystemResources(userId);
 
-    // Execute the setup script
-    const setupScript = os === 'windows' ? windowsSetupScripts[setupType] : linuxSetupScripts[setupType];
+    // // Execute the setup script
+    // const setupScript = os === 'windows' ? windowsSetupScripts[setupType] : linuxSetupScripts[setupType];
+    const setupScript =  linuxSetupScripts[setupType];
     const { success, data } = await executeSetupScript(userId, setupScript);
 
     if (success) {

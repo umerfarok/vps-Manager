@@ -47,6 +47,10 @@ async function handlePost(req, res, userId) {
       return await loadConfig(req, res, userId);
     case 'apply':
       return await applyConfig(req, res, userId);
+    case 'delete':
+      return await deleteConfig(req, res, userId);
+    case 'create':
+      return await createNewFile(req, res, userId);
     default:
       res.status(400).json({ error: 'Invalid action' });
   }
@@ -59,11 +63,8 @@ async function saveConfig(req, res, userId) {
   }
 
   try {
-    // Escape single quotes and backslashes in the config
     const escapedConfig = config.replace(/'/g, "'\\''").replace(/\\/g, '\\\\');
-
     const command = `echo '${escapedConfig}' | sudo tee /etc/nginx/sites-available/${name}`;
-
     const { code, stdout, stderr } = await sshManager.executeCommand(userId, command);
 
     if (code === 0) {
@@ -94,19 +95,17 @@ async function loadConfig(req, res, userId) {
     res.status(500).json({ error: 'Error loading config', details: error.message });
   }
 }
-
 async function applyConfig(req, res, userId) {
-  const { config } = req.body;
-  if (!config) {
-    return res.status(400).json({ error: 'Config is required' });
+  const { config, name } = req.body;
+  if (!config || !name) {
+    return res.status(400).json({ error: 'Config and name are required' });
   }
 
   try {
-    // Escape single quotes and backslashes in the config
     const escapedConfig = config.replace(/'/g, "'\\''").replace(/\\/g, '\\\\');
-
     const commands = [
-      `echo '${escapedConfig}' | sudo tee /etc/nginx/nginx.conf`,
+      `echo '${escapedConfig}' | sudo tee /etc/nginx/sites-available/${name}`,
+      `sudo ln -sf /etc/nginx/sites-available/${name} /etc/nginx/sites-enabled/${name}`,
       'sudo nginx -t',
       'sudo systemctl reload nginx'
     ];
@@ -119,5 +118,49 @@ async function applyConfig(req, res, userId) {
     }
   } catch (error) {
     res.status(500).json({ error: 'Error applying config', details: error.message });
+  }
+}
+
+async function deleteConfig(req, res, userId) {
+  const { name } = req.body;
+  if (!name) {
+    return res.status(400).json({ error: 'Config name is required' });
+  }
+
+  try {
+    const commands = [
+      `sudo rm -f /etc/nginx/sites-available/${name}`,
+      `sudo rm -f /etc/nginx/sites-enabled/${name}`,
+      'sudo nginx -t',
+      'sudo systemctl reload nginx'
+    ];
+    const command = commands.join(' && ');
+    const { code, stdout, stderr } = await sshManager.executeCommand(userId, command);
+    if (code === 0) {
+      res.status(200).json({ message: 'Configuration deleted successfully', output: stdout });
+    } else {
+      res.status(500).json({ error: 'Failed to delete configuration', details: stderr });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Error deleting config', details: error.message });
+  }
+}
+
+async function createNewFile(req, res, userId) {
+  const { name } = req.body;
+  if (!name) {
+    return res.status(400).json({ error: 'File name is required' });
+  }
+
+  try {
+    const command = `sudo touch /etc/nginx/sites-available/${name} && echo "# New Nginx configuration file" | sudo tee /etc/nginx/sites-available/${name}`;
+    const { code, stdout, stderr } = await sshManager.executeCommand(userId, command);
+    if (code === 0) {
+      res.status(200).json({ message: 'New file created successfully', output: stdout });
+    } else {
+      res.status(500).json({ error: 'Failed to create new file', details: stderr });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Error creating new file', details: error.message });
   }
 }

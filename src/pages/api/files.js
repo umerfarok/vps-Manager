@@ -1,6 +1,13 @@
 import { sshManager } from '../../lib/sshManager';
 import path from 'path';
-import fs from 'fs';
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
+};
 
 export default async function handler(req, res) {
   const userId = req.headers['x-user-id'];
@@ -47,7 +54,6 @@ async function checkSSHConnection(userId) {
   }
   return true;
 }
-
 async function executeCommand(userId, command) {
   console.log('Executing command:', command);
   try {
@@ -62,27 +68,20 @@ async function executeCommand(userId, command) {
 
 async function handleGetRequest(userId, currentPath = '/', query, res) {
   const { sortBy = 'name', sortDirection = 'asc' } = query;
-  console.log('Listing directory:', currentPath);
 
   try {
     await checkSSHConnection(userId);
-    const { code, stdout, stderr } = await executeCommand(userId, `ls -la "${currentPath}"`);
+    const { code, stdout, stderr } = await sshManager.executeCommand(userId, `ls -la "${currentPath}"`);
 
     if (code === 0) {
       let files = parseFileList(stdout);
-      console.log('Parsed files:', files);
-
       files = sortFiles(files, sortBy, sortDirection);
-      console.log('Sorted files:', files);
-
       res.status(200).json({ files, currentPath });
     } else {
-      console.error(`Failed to list files. Exit code: ${code}, stderr: ${stderr}`);
-      res.status(500).json({ error: 'Failed to list files', details: stderr });
+      throw new Error(`Failed to list files: ${stderr}`);
     }
   } catch (error) {
-    console.error('Error in handleGetRequest:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    handleApiError(res, error, 'Error listing files');
   }
 }
 
@@ -92,30 +91,21 @@ async function handlePostRequest(userId, currentPath, body, res) {
     return res.status(400).json({ error: 'Name and type are required' });
   }
 
-  const sanitizedFileName = path.basename(name).replace(/^\/*/, '');
-  const sanitizedCurrentPath = currentPath.replace(/\/+$/, '');
-  const fullPath = path.join(sanitizedCurrentPath, sanitizedFileName);
-  let command;
-
-  if (type === 'directory') {
-    command = `mkdir -p "${fullPath}"`;
-  } else if (type === 'file') {
-    command = `echo "${content || ''}" > "${fullPath}"`;
-  } else {
-    return res.status(400).json({ error: 'Invalid type' });
-  }
+  const sanitizedFileName = sanitizeFileName(name);
+  const fullPath = path.posix.join(currentPath, sanitizedFileName);
 
   try {
     await checkSSHConnection(userId);
-    const { code, stderr } = await executeCommand(userId, command);
-    if (code === 0) {
-      res.status(201).json({ message: `${type} created successfully` });
+    if (type === 'directory') {
+      await sshManager.executeCommand(userId, `mkdir -p "${fullPath}"`);
+    } else if (type === 'file') {
+      await sshManager.executeCommand(userId, `echo "${escapeContent(content || '')}" > "${fullPath}"`);
     } else {
-      res.status(500).json({ error: `Failed to create ${type}`, details: stderr });
+      return res.status(400).json({ error: 'Invalid type' });
     }
+    res.status(201).json({ message: `${type} created successfully` });
   } catch (error) {
-    console.error('Error in handlePostRequest:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    handleApiError(res, error, `Error creating ${type}`);
   }
 }
 
@@ -125,20 +115,14 @@ async function handleDeleteRequest(userId, currentPath, body, res) {
     return res.status(400).json({ error: 'Name is required' });
   }
 
-  const fullPath = path.join(currentPath, name);
-  const command = `rm -rf "${fullPath}"`;
+  const fullPath = path.posix.join(currentPath, name);
 
   try {
     await checkSSHConnection(userId);
-    const { code, stderr } = await executeCommand(userId, command);
-    if (code === 0) {
-      res.status(200).json({ message: 'Item deleted successfully' });
-    } else {
-      res.status(500).json({ error: 'Failed to delete item', details: stderr });
-    }
+    await sshManager.executeCommand(userId, `rm -rf "${fullPath}"`);
+    res.status(200).json({ message: 'Item deleted successfully' });
   } catch (error) {
-    console.error('Error in handleDeleteRequest:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    handleApiError(res, error, 'Error deleting item');
   }
 }
 
@@ -150,33 +134,20 @@ async function handlePutRequest(userId, currentPath, body, res) {
 
     if (oldName && newName) {
       // Rename operation
-      const oldPath = path.join(currentPath, oldName);
-      const newPath = path.join(currentPath, newName);
-      const command = `mv "${oldPath}" "${newPath}"`;
-
-      const { code, stderr } = await executeCommand(userId, command);
-      if (code === 0) {
-        res.status(200).json({ message: 'Item renamed successfully' });
-      } else {
-        res.status(500).json({ error: 'Failed to rename item', details: stderr });
-      }
+      const oldPath = path.posix.join(currentPath, oldName);
+      const newPath = path.posix.join(currentPath, sanitizeFileName(newName));
+      await sshManager.executeCommand(userId, `mv "${oldPath}" "${newPath}"`);
+      res.status(200).json({ message: 'Item renamed successfully' });
     } else if (name && content !== undefined) {
       // Edit file content
-      const fullPath = path.join(currentPath, name);
-      const command = `echo "${content}" > "${fullPath}"`;
-
-      const { code, stderr } = await executeCommand(userId, command);
-      if (code === 0) {
-        res.status(200).json({ message: 'File updated successfully' });
-      } else {
-        res.status(500).json({ error: 'Failed to update file', details: stderr });
-      }
+      const fullPath = path.posix.join(currentPath, name);
+      await sshManager.executeCommand(userId, `echo "${escapeContent(content)}" > "${fullPath}"`);
+      res.status(200).json({ message: 'File updated successfully' });
     } else {
       res.status(400).json({ error: 'Invalid request body' });
     }
   } catch (error) {
-    console.error('Error in handlePutRequest:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    handleApiError(res, error, 'Error updating file');
   }
 }
 
@@ -185,7 +156,7 @@ async function handleDownload(userId, currentPath, filename, res) {
     return res.status(400).json({ error: 'Filename is required' });
   }
 
-  const fullPath = path.join(currentPath, filename);
+  const fullPath = path.posix.join(currentPath, filename);
 
   try {
     await checkSSHConnection(userId);
@@ -195,11 +166,10 @@ async function handleDownload(userId, currentPath, filename, res) {
       res.setHeader('Content-Type', 'application/octet-stream');
       res.status(200).send(stdout);
     } else {
-      res.status(500).json({ error: 'Failed to download file', details: stderr });
+      throw new Error(`Failed to download file: ${stderr}`);
     }
   } catch (error) {
-    console.error('Error in handleDownload:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    handleApiError(res, error, 'Error downloading file');
   }
 }
 
@@ -207,13 +177,11 @@ async function handleReadFile(userId, currentPath, filename, res) {
   if (!filename) {
     return res.status(400).json({ error: 'Filename is required' });
   }
-
   const basePath = currentPath.endsWith(filename)
-    ? path.posix.dirname(currentPath)
-    : currentPath;
+  ? path.posix.dirname(currentPath)
+  : currentPath;
 
-  const fullPath = path.posix.join(basePath, filename);
-  console.log('Reading file:', fullPath);
+const fullPath = path.posix.join(basePath, filename);
 
   try {
     await checkSSHConnection(userId);
@@ -221,12 +189,10 @@ async function handleReadFile(userId, currentPath, filename, res) {
     if (code === 0) {
       res.status(200).json({ content: stdout });
     } else {
-      console.error(`Failed to read file: ${stderr}`);
-      res.status(500).json({ error: 'Failed to read file', details: stderr });
+      throw new Error(`Failed to read file: ${stderr}`);
     }
   } catch (error) {
-    console.error('Error in handleReadFile:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    handleApiError(res, error, 'Error reading file');
   }
 }
 
@@ -236,7 +202,8 @@ async function handleUpload(userId, currentPath, req, res) {
   }
 
   const uploadedFile = req.files.file;
-  const uploadPath = path.join(currentPath, uploadedFile.name);
+  const sanitizedFileName = sanitizeFileName(uploadedFile.name);
+  const uploadPath = path.posix.join(currentPath, sanitizedFileName);
 
   try {
     await checkSSHConnection(userId);
@@ -245,31 +212,19 @@ async function handleUpload(userId, currentPath, req, res) {
     await sshManager.uploadFile(userId, uploadedFile.data, uploadPath);
     res.status(200).json({ message: 'File uploaded successfully' });
   } catch (error) {
-    console.error('Error in handleUpload:', error);
-    res.status(500).json({ error: 'Failed to upload file', details: error.message });
+    handleApiError(res, error, 'Error uploading file');
   }
 }
 
 function parseFileList(data) {
-  if (!data || typeof data !== 'string') {
-    console.warn('Invalid data received in parseFileList:', data);
-    return [];
-  }
-
   const lines = data.split('\n');
-  console.log('Number of lines:', lines.length);
-
   return lines
-    .slice(1)  // Skip the first line which is usually "total ..."
+    .slice(1)
     .map(line => {
       const parts = line.trim().split(/\s+/);
-      if (parts.length < 9) {
-        console.warn('Invalid line format:', line);
-        return null;
-      }
+      if (parts.length < 9) return null;
 
       const name = parts.slice(8).join(' ');
-      // Skip '.' and '..' entries
       if (name === '.' || name === '..') return null;
 
       return {
@@ -282,31 +237,29 @@ function parseFileList(data) {
         lastModified: `${parts[5]} ${parts[6]} ${parts[7]}`
       };
     })
-    .filter(Boolean);  // Remove null entries
+    .filter(Boolean);
 }
 
 function sortFiles(files, sortBy, sortDirection) {
   return files.sort((a, b) => {
-    // Always put directories first
     if (a.type !== b.type) {
       return a.type === 'directory' ? -1 : 1;
     }
-
-    // For matching types, sort by the specified field
     if (a[sortBy] < b[sortBy]) return sortDirection === 'asc' ? -1 : 1;
     if (a[sortBy] > b[sortBy]) return sortDirection === 'asc' ? 1 : -1;
     return 0;
   });
 }
 
-function normalizePath(inputPath) {
-  let normalizedPath = inputPath.replace(/\\/g, '/');
-  if (!normalizedPath.startsWith('/')) {
-    normalizedPath = '/' + normalizedPath;
-  }
-  normalizedPath = normalizedPath.replace(/\/+/g, '/');
-  if (normalizedPath.length > 1 && normalizedPath.endsWith('/')) {
-    normalizedPath = normalizedPath.slice(0, -1);
-  }
-  return normalizedPath;
+function sanitizeFileName(fileName) {
+  return fileName.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+}
+
+function escapeContent(content) {
+  return content.replace(/"/g, '\\"').replace(/\$/g, '\\$');
+}
+
+function handleApiError(res, error, message) {
+  console.error(message, error);
+  res.status(500).json({ error: message, details: error.message });
 }

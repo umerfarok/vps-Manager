@@ -17,6 +17,7 @@
     "axios": "^1.7.3",
     "formidable": "^3.5.1",
     "lucide-react": "^0.417.0",
+    "mime-types": "^2.1.35",
     "next": "14.2.5",
     "react": "^18",
     "react-ace": "^12.0.0",
