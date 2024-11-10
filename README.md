@@ -2,7 +2,10 @@
 
 A modern web-based VPS (Virtual Private Server) management interface that provides an intuitive way to manage your server through a clean, responsive UI.
 
-![VPS Manager Screenshot](screenshot.png)
+![VPS Manager Screenshot 1](screenshots/1.png)
+![VPS Manager Screenshot 2](screenshots/2.png)
+![VPS Manager Screenshot 3](screenshots/3.png)
+
 
 ## 🌟 Features
 
