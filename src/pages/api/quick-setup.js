@@ -1,157 +1,293 @@
 import { sshManager } from '../../lib/sshManager';
 
-const linuxSetupScripts = {
+// Base installation scripts - removing sudo for root user
+const baseScripts = {
   nginx: `
     set -e
+    # Update package lists and ensure prerequisites
     if command -v apt-get &> /dev/null; then
-      sudo apt-get update
-      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
+      echo "Detected Debian/Ubuntu system"
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y curl gnupg2 ca-certificates lsb-release ubuntu-keyring
+      DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
+    elif command -v dnf &> /dev/null; then
+      echo "Detected RHEL/CentOS/Fedora system with DNF"
+      dnf update -y
+      dnf install -y nginx
     elif command -v yum &> /dev/null; then
-      sudo yum update -y
-      sudo yum install -y nginx
+      echo "Detected RHEL/CentOS system with YUM"
+      yum update -y
+      yum install -y epel-release
+      yum install -y nginx
     else
-      echo "Unsupported package manager" && exit 1
+      echo "Unsupported package manager"
+      exit 1
     fi
-    sudo systemctl start nginx || sudo service nginx start
-    sudo systemctl enable nginx || sudo chkconfig nginx on
-    echo "Nginx installation completed"
+
+    # Ensure nginx is started and enabled
+    if command -v systemctl &> /dev/null; then
+      systemctl start nginx
+      systemctl enable nginx
+    else
+      service nginx start
+      chkconfig nginx on
+    fi
+
+    # Verify installation
+    nginx -v
+    curl -f http://localhost &> /dev/null || exit 1
   `,
-  'nginx-certbot': `
+  certbot: `
     set -e
     if command -v apt-get &> /dev/null; then
-      sudo apt-get update
-      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot python3-certbot-nginx
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y certbot python3-certbot-nginx
+    elif command -v dnf &> /dev/null; then
+      dnf install -y certbot python3-certbot-nginx
     elif command -v yum &> /dev/null; then
-      sudo yum update -y
-      sudo yum install -y nginx certbot python3-certbot-nginx
+      yum install -y certbot python3-certbot-nginx
     else
-      echo "Unsupported package manager" && exit 1
+      echo "Unsupported package manager"
+      exit 1
     fi
-    sudo systemctl start nginx || sudo service nginx start
-    sudo systemctl enable nginx || sudo chkconfig nginx on
-    echo "Nginx and Certbot installation completed"
   `,
   caddy: `
     set -e
     if command -v apt-get &> /dev/null; then
-      sudo apt-get update
-      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
-      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-      sudo apt-get update
-      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+      # Debian/Ubuntu installation
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+    elif command -v dnf &> /dev/null; then
+      # RHEL/CentOS/Fedora with DNF
+      dnf install -y 'dnf-command(copr)'
+      dnf copr enable -y @caddy/caddy
+      dnf install -y caddy
     elif command -v yum &> /dev/null; then
-      sudo yum install -y yum-utils
-      sudo yum-config-manager --add-repo https://yum.caddy.com/caddy.repo
-      sudo yum install -y caddy
+      # RHEL/CentOS with YUM
+      yum install -y yum-plugin-copr
+      yum copr enable -y @caddy/caddy
+      yum install -y caddy
     else
-      echo "Unsupported package manager" && exit 1
+      echo "Unsupported package manager"
+      exit 1
     fi
-    sudo systemctl start caddy || sudo service caddy start
-    sudo systemctl enable caddy || sudo chkconfig caddy on
-    echo "Caddy installation completed"
-  `,
+
+    # Ensure caddy is started and enabled
+    if command -v systemctl &> /dev/null; then
+      systemctl start caddy
+      systemctl enable caddy
+    else
+      service caddy start
+      chkconfig caddy on
+    fi
+  `
 };
 
-const windowsSetupScripts = {
-  // ... (your existing Windows setup scripts)
+// Installation configurations
+const linuxSetupScripts = {
+  nginx: {
+    preCheck: `
+      # Check if nginx is already installed
+      if command -v nginx &> /dev/null; then
+        echo "Nginx is already installed"
+        nginx -v
+        exit 100
+      fi
+      
+      # Check ports 80 and 443
+      if netstat -tln | grep -E ':80|:443' &> /dev/null; then
+        echo "Ports 80 or 443 are already in use"
+        exit 101
+      fi
+    `,
+    install: baseScripts.nginx,
+    postCheck: `
+      # Verify nginx is running
+      if ! pgrep nginx &> /dev/null; then
+        echo "Nginx is not running after installation"
+        exit 1
+      fi
+      
+      # Check if config is valid
+      nginx -t || exit 1
+      
+      # Check if ports are listening
+      if ! netstat -tln | grep -E ':80|:443' &> /dev/null; then
+        echo "Nginx is not listening on expected ports"
+        exit 1
+      fi
+    `
+  },
+  'nginx-certbot': {
+    preCheck: `
+      # Check existing installations
+      if command -v certbot &> /dev/null; then
+        echo "Certbot is already installed"
+        certbot --version
+        exit 100
+      fi
+    `,
+    install: `
+      set -e
+      # Install Nginx first if not present
+      if ! command -v nginx &> /dev/null; then
+        ${baseScripts.nginx}
+      fi
+
+      # Install certbot and nginx plugin
+      ${baseScripts.certbot}
+
+      # Verify installations
+      nginx -v
+      certbot --version
+    `,
+    postCheck: `
+      # Check certbot and nginx are working
+      if ! command -v certbot &> /dev/null; then
+        echo "Certbot installation failed"
+        exit 1
+      fi
+      
+      # Verify nginx plugin
+      if ! certbot plugins --noninteractive | grep -q "nginx"; then
+        echo "Nginx plugin for Certbot is not properly installed"
+        exit 1
+      fi
+    `
+  },
+  caddy: {
+    preCheck: `
+      # Check if caddy is already installed
+      if command -v caddy &> /dev/null; then
+        echo "Caddy is already installed"
+        caddy version
+        exit 100
+      fi
+      
+      # Check ports 80 and 443
+      if netstat -tln | grep -E ':80|:443' &> /dev/null; then
+        echo "Ports 80 or 443 are already in use"
+        exit 101
+      fi
+    `,
+    install: baseScripts.caddy,
+    postCheck: `
+      # Verify Caddy is running
+      if ! pgrep caddy &> /dev/null; then
+        echo "Caddy is not running after installation"
+        exit 1
+      fi
+      
+      # Check if ports are listening
+      if ! netstat -tln | grep -E ':80|:443' &> /dev/null; then
+        echo "Caddy is not listening on expected ports"
+        exit 1
+      fi
+    `
+  }
 };
 
-const getOS = async (userId) => {
+// System checks
+const systemChecks = {
+  disk: async (userId) => {
+    const { code, stdout } = await sshManager.executeCommand(
+      userId,
+      "df -BG / | awk 'NR==2 {print $4}'"
+    );
+    if (code !== 0) throw new Error('Failed to check disk space');
+    
+    const freeSpaceGB = parseInt(stdout.trim().replace('G', ''));
+    if (freeSpaceGB < 5) {
+      throw new Error(`Insufficient disk space: ${freeSpaceGB}GB free, minimum 5GB required`);
+    }
+    return freeSpaceGB;
+  },
+
+  memory: async (userId) => {
+    const { code, stdout } = await sshManager.executeCommand(
+      userId,
+      "free -g | awk '/^Mem:/ {print $7}'"
+    );
+    if (code !== 0) throw new Error('Failed to check memory');
+    
+    const freeMemoryGB = parseInt(stdout.trim());
+    if (freeMemoryGB < 1) {
+      throw new Error(`Insufficient memory: ${freeMemoryGB}GB free, minimum 1GB required`);
+    }
+    return freeMemoryGB;
+  },
+
+  ports: async (userId) => {
+    const { code, stdout } = await sshManager.executeCommand(
+      userId,
+      "netstat -tln | grep -E ':80|:443' || true"
+    );
+    if (code !== 0) throw new Error('Failed to check port availability');
+    
+    if (stdout.trim()) {
+      return stdout.split('\n').map(line => {
+        const port = line.match(/:(\d+)/)?.[1];
+        return `Port ${port} is already in use`;
+      });
+    }
+    return [];
+  },
+
+  permissions: async (userId) => {
+    // First check if user is root
+    const { code: whoamiCode, stdout: whoamiOutput } = await sshManager.executeCommand(userId, "whoami");
+    
+    if (whoamiCode === 0 && whoamiOutput.trim() === 'root') {
+      return true; // Root user has all permissions
+    }
+
+    // If not root, check sudo access
+    const { code: sudoCode } = await sshManager.executeCommand(userId, "sudo -n true 2>/dev/null");
+    if (sudoCode !== 0) {
+      throw new Error('Insufficient permissions: root or sudo access is required');
+    }
+    return true;
+  }
+};
+
+// OS detection
+const detectOS = async (userId) => {
   try {
     const commands = [
-      'uname -s',
-      'test -f /etc/os-release && echo "Linux"',
-      'test -d /Applications && echo "macOS"',
-      'ver'  // Windows command
+      { cmd: 'cat /etc/os-release', parse: stdout => stdout.toLowerCase() },
+      { cmd: 'uname -a', parse: stdout => stdout.toLowerCase() },
+      { cmd: 'lsb_release -a', parse: stdout => stdout.toLowerCase() }
     ];
 
-    for (const command of commands) {
-      const { code, stdout, stderr } = await sshManager.executeCommand(userId, command);
-      console.log(`OS data (${command}):`, { code, stdout, stderr });
-
-      if (code === 0 && stdout) {
-        const osInfo = stdout.toLowerCase().trim();
-        if (osInfo.includes('linux')) return 'linux';
-        if (osInfo.includes('darwin') || osInfo.includes('macos')) return 'macos';
-        if (osInfo.includes('windows')) return 'windows';
+    for (const { cmd, parse } of commands) {
+      try {
+        const { code, stdout } = await sshManager.executeCommand(userId, cmd);
+        if (code === 0 && stdout) {
+          const output = parse(stdout);
+          
+          if (output.includes('ubuntu') || output.includes('debian')) {
+            return { type: 'linux', flavor: 'debian' };
+          } else if (output.includes('centos') || output.includes('rhel') || output.includes('fedora')) {
+            return { type: 'linux', flavor: 'rhel' };
+          } else if (output.includes('linux')) {
+            return { type: 'linux', flavor: 'unknown' };
+          }
+        }
+      } catch (error) {
+        console.warn(`Failed to execute ${cmd}:`, error);
+        continue;
       }
     }
-
-    throw new Error('Unable to determine OS or unsupported OS');
+    throw new Error('Unable to determine OS type');
   } catch (error) {
-    console.error('Error in getOS:', error);
-    throw new Error(`Failed to determine OS: ${error.message}`);
+    throw new Error(`OS detection failed: ${error.message}`);
   }
 };
 
-const checkSystemResources = async (userId) => {
-  try {
-    // Check disk space
-    const { code: diskCode, data: diskData } = await sshManager.executeCommand(userId, "df -BG / | awk 'NR==2 {print $4}'");
-    if (diskCode === 0) {
-      const freeSpaceGB = parseInt(diskData.trim().replace('G', ''));
-      if (freeSpaceGB < 5) {
-        throw new Error('Insufficient disk space. At least 5GB of free space is required.');
-      }
-    } else {
-      throw new Error('Failed to check disk space');
-    }
-
-    // Check memory
-    const { code: memCode, data: memData } = await sshManager.executeCommand(userId, "free -g | awk '/^Mem:/ {print $7}'");
-    console.log('Memory data:', { memCode, memData });
-    if (memCode === 0) {
-      const freeMemoryGB = parseInt(memData.trim());
-      if (freeMemoryGB < 1) {
-        throw new Error('Insufficient memory. At least 1GB of free memory is required.');
-      }
-    } else {
-      throw new Error('Failed to check memory');
-    }
-  } catch (error) {
-    throw new Error(`Failed to check system resources: ${error.message}`);
-  }
-};
-
-const executeSetupScript = async (userId, setupScript) => {
-  const maxRetries = 3;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const { code, data } = await sshManager.executeCommand(userId, setupScript);
-      if (code === 0) {
-        return { success: true, data };
-      } else {
-        throw new Error(`Setup failed: ${data}`);
-      }
-    } catch (error) {
-      console.error(`Attempt ${i + 1} failed:`, error.message);
-      if (i === maxRetries - 1) {
-        throw error;
-      }
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retrying
-    }
-  }
-};
-
-const verifyInstallation = async (userId, setupType) => {
-  const verificationCommands = {
-    nginx: "nginx -v",
-    'nginx-certbot': "nginx -v && certbot --version",
-    caddy: "caddy version"
-  };
-
-  const command = verificationCommands[setupType];
-  if (!command) {
-    throw new Error(`No verification command for setup type: ${setupType}`);
-  }
-
-  const { code, data } = await sshManager.executeCommand(userId, command);
-  if (code !== 0) {
-    throw new Error(`Verification failed: ${data}`);
-  }
-  return data;
-};
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -166,74 +302,117 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized: User ID is required' });
   }
 
-  if (!linuxSetupScripts[setupType] && !windowsSetupScripts[setupType]) {
+  if (!linuxSetupScripts[setupType]) {
     return res.status(400).json({ error: 'Invalid setup type' });
   }
 
+  const setupLog = [];
+
   try {
-    // Check if there's an active SSH connection
-    if (!sshManager.getConnection(userId)) {
-      throw new Error('No active SSH connection. Please connect to the server first.');
+    // Check SSH connection
+    if (!await sshManager.isConnected(userId)) {
+      throw new Error('No active SSH connection');
     }
+    setupLog.push('SSH connection verified');
 
-    const os = await getOS(userId);
-
-    if (os !== 'linux' && os !== 'windows') {
-      throw new Error(`Unsupported operating system: ${os}`);
+    // Detect OS
+    const os = await detectOS(userId);
+    if (os.type !== 'linux') {
+      throw new Error(`Unsupported operating system: ${os.type}`);
     }
+    setupLog.push(`Detected OS: ${os.type} (${os.flavor})`);
 
-    // // Check system resources
-    // await checkSystemResources(userId);
+    // Check permissions first
+    await systemChecks.permissions(userId);
+    setupLog.push('Permission check passed');
 
-    // // Execute the setup script
-    // const setupScript = os === 'windows' ? windowsSetupScripts[setupType] : linuxSetupScripts[setupType];
-    const setupScript =  linuxSetupScripts[setupType];
-    const { success, data } = await executeSetupScript(userId, setupScript);
+    // Check system resources
+    const diskSpace = await systemChecks.disk(userId);
+    setupLog.push(`Disk space check passed: ${diskSpace}GB available`);
 
-    if (success) {
-      // Verify the installation
-      const verificationOutput = await verifyInstallation(userId, setupType);
-      res.status(200).json({
-        message: `${setupType} setup completed successfully`,
-        output: data,
-        verificationOutput
+    const memory = await systemChecks.memory(userId);
+    setupLog.push(`Memory check passed: ${memory}GB available`);
+
+    const portIssues = await systemChecks.ports(userId);
+    if (portIssues.length > 0) {
+      setupLog.push('Port availability issues:', ...portIssues);
+      throw new Error(`Port conflict detected: ${portIssues.join(', ')}`);
+    }
+    setupLog.push('Port availability check passed');
+
+    // Run pre-installation checks
+    const { code: preCheckCode, stdout: preCheckOutput } = await sshManager.executeCommand(
+      userId,
+      linuxSetupScripts[setupType].preCheck
+    );
+    
+    if (preCheckCode === 100) {
+      setupLog.push(preCheckOutput);
+      return res.status(200).json({
+        message: 'Software is already installed',
+        details: preCheckOutput,
+        log: setupLog
       });
-    } else {
-      throw new Error(`${setupType} setup failed: ${data}`);
     }
+
+    setupLog.push('Pre-installation checks passed');
+
+    // Run installation
+    const { code: installCode, stdout: installOutput } = await sshManager.executeCommand(
+      userId,
+      linuxSetupScripts[setupType].install
+    );
+    
+    if (installCode !== 0) {
+      throw new Error(`Installation failed: ${installOutput}`);
+    }
+    setupLog.push('Installation completed successfully');
+
+    // Run post-installation checks
+    const { code: postCheckCode, stdout: postCheckOutput } = await sshManager.executeCommand(
+      userId,
+      linuxSetupScripts[setupType].postCheck
+    );
+    
+    if (postCheckCode !== 0) {
+      throw new Error(`Post-installation verification failed: ${postCheckOutput}`);
+    }
+    setupLog.push('Post-installation verification passed');
+
+    res.status(200).json({
+      message: `${setupType} setup completed successfully`,
+      details: {
+        os: os,
+        installOutput: installOutput,
+        verificationOutput: postCheckOutput
+      },
+      log: setupLog
+    });
+
   } catch (error) {
     console.error('Setup error:', error);
 
     const errorResponse = {
-      error: 'An error occurred during setup',
+      error: 'Setup failed',
+      step: 'setup',
       details: error.message,
+      log: setupLog
     };
 
-    if (error.message.includes('No active SSH connection')) {
-      res.status(400).json(errorResponse);
-    } else if (error.message.includes('Authentication failed')) {
-      errorResponse.error = 'SSH authentication failed. Please check your credentials.';
-      res.status(401).json(errorResponse);
-    } else if (error.message.includes('Permission denied')) {
-      errorResponse.error = 'Permission denied. Please check your user permissions.';
-      res.status(403).json(errorResponse);
-    } else if (error.message.includes('Unsupported operating system')) {
-      errorResponse.error = 'Unsupported operating system';
-      res.status(500).json(errorResponse);
-    } else if (error.message.includes('Insufficient disk space')) {
-      errorResponse.error = 'Insufficient disk space on the server';
-      res.status(507).json(errorResponse);
-    } else if (error.message.includes('Insufficient memory')) {
-      errorResponse.error = 'Insufficient memory on the server';
-      res.status(507).json(errorResponse);
-    } else if (error.message.includes('Failed to check')) {
-      errorResponse.error = 'Failed to check system resources';
-      res.status(500).json(errorResponse);
-    } else if (error.message.includes('Verification failed')) {
-      errorResponse.error = 'Installation verification failed';
-      res.status(500).json(errorResponse);
-    } else {
-      res.status(500).json(errorResponse);
-    }
+        // Map errors to appropriate status codes
+    const errorMapping = {
+      'No active SSH connection': 400,
+      'Unauthorized': 401,
+      'Permission denied': 403,
+      'Insufficient permissions': 403,
+      'Unsupported operating system': 400,
+      'Insufficient disk space': 507,
+      'Insufficient memory': 507,
+      'Port': 409 // Conflict
+    };
+    
+    const statusCode = Object.keys(errorMapping).find(key => error.message.includes(key)) ? errorMapping[Object.keys(errorMapping).find(key => error.message.includes(key))] : 500;
+    
+    res.status(statusCode).json(errorResponse);
   }
 }

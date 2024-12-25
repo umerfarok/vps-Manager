@@ -71,12 +71,99 @@ export default function Home() {
     checkConnection
   } = useConnection(userId);
 
+
+  const [setupProgress, setSetupProgress] = useState({
+    open: false,
+    currentStep: '',
+    log: [],
+    error: null
+  });
+
+  // Enhanced quick setup handler
+  const handleEnhancedQuickSetup = async (type) => {
+    if (!isConnected) {
+      setSnackbar({
+        open: true,
+        message: 'Please connect to your VPS first',
+        severity: 'warning'
+      });
+      return;
+    }
+
+    setSetupProgress({
+      open: true,
+      currentStep: 'System Check',
+      log: [],
+      error: null
+    });
+
+    try {
+      const response = await fetch('/api/quick-setup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': userId
+        },
+        body: JSON.stringify({ setupType: type })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || 'Setup failed');
+      }
+
+      // Update progress dialog with success
+      setSetupProgress(prev => ({
+        ...prev,
+        currentStep: 'Complete',
+        log: [
+          ...prev.log,
+          { type: 'success', message: 'Setup completed successfully' }
+        ]
+      }));
+
+      setSnackbar({
+        open: true,
+        message: `${type} setup completed successfully`,
+        severity: 'success'
+      });
+
+    } catch (error) {
+      console.error('Setup error:', error);
+      
+      setSetupProgress(prev => ({
+        ...prev,
+        error: error.message,
+        log: [
+          ...prev.log,
+          { type: 'error', message: 'Setup failed', details: error.message }
+        ]
+      }));
+
+      setSnackbar({
+        open: true,
+        message: `Setup failed: ${error.message}`,
+        severity: 'error'
+      });
+
+      // Check if we need to update connection state
+      if (error.message.includes('No active SSH connection') || 
+          error.message.includes('Authentication failed')) {
+            setConnection(false);
+        // setConnectionState('disconnected');
+      }
+    }
+  };
+  const handleSetupDialogClose = () => {
+    setSetupProgress(prev => ({ ...prev, open: false }));
+  };
+
   useEffect(() => {
     if (userId) {
       checkConnection();
     }
   }, [userId, checkConnection]);
-
 
   if (isLoadingUserId) {
     return (
@@ -205,7 +292,8 @@ export default function Home() {
           )}
         </Paper>
 
-        <Typography variant="h5" gutterBottom color="primary">
+          {/* Quick Setup Section */}
+          <Typography variant="h5" gutterBottom color="primary">
           Quick Setup
         </Typography>
         <Grid container spacing={2} sx={{ mb: 4 }}>
@@ -213,7 +301,7 @@ export default function Home() {
             <Button
               fullWidth
               variant="contained"
-              onClick={() => handleQuickSetup('nginx')}
+              onClick={() => handleEnhancedQuickSetup('nginx')}
               size="large"
               disabled={setupLoading.nginx || !isConnected}
               startIcon={setupLoading.nginx ? <CircularProgress size={20} /> : null}
@@ -225,7 +313,7 @@ export default function Home() {
             <Button
               fullWidth
               variant="contained"
-              onClick={() => handleQuickSetup('nginx-certbot')}
+              onClick={() => handleEnhancedQuickSetup('nginx-certbot')}
               size="large"
               disabled={setupLoading['nginx-certbot'] || !isConnected}
               startIcon={setupLoading['nginx-certbot'] ? <CircularProgress size={20} /> : null}
@@ -237,7 +325,7 @@ export default function Home() {
             <Button
               fullWidth
               variant="contained"
-              onClick={() => handleQuickSetup('caddy')}
+              onClick={() => handleEnhancedQuickSetup('caddy')}
               size="large"
               disabled={setupLoading.caddy || !isConnected}
               startIcon={setupLoading.caddy ? <CircularProgress size={20} /> : null}

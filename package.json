@@ -16,6 +16,7 @@
     "@mui/material": "^5.16.6",
     "axios": "^1.7.3",
     "formidable": "^3.5.1",
+    "framer-motion": "^11.15.0",
     "lucide-react": "^0.417.0",
     "mime-types": "^2.1.35",
     "next": "14.2.5",
