@@ -133,9 +133,10 @@ class SSHManager {
       throw new Error('Invalid host: must be a non-empty string');
     }
 
-    // Validate host format (basic check)
+    // Validate host format (basic check) - allow Docker hostnames
     const hostRegex = /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$|^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
-    if (!hostRegex.test(config.host) && config.host !== 'localhost') {
+    const isValidHostname = /^[a-zA-Z0-9.-]+$/;
+    if (!hostRegex.test(config.host) && config.host !== 'localhost' && !isValidHostname.test(config.host)) {
       throw new Error('Invalid host format');
     }
 

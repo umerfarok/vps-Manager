@@ -39,14 +39,26 @@ export default async function handler(req, res) {
       });
     }
 
-    // Prepare connection config
+    // Prepare connection config with Docker networking support
+    let connectionHost = host.trim();
+    let connectionPort = parseInt(port, 10);
+
+    // Auto-detect Docker environment and adjust networking
+    // If user is trying to connect to localhost:2222 (Docker SSH server),
+    // translate it to ssh-server:22 for internal Docker networking
+    if (connectionHost === 'localhost' && connectionPort === 2222) {
+      connectionHost = 'ssh-server';
+      connectionPort = 22;
+      console.log('Docker environment detected: translating localhost:2222 to ssh-server:22');
+    }
+
     const config = {
-      host: host.trim(),
-      port: parseInt(port, 10),
+      host: connectionHost,
+      port: connectionPort,
       username: username.trim(),
-      ...(authType === 'password' 
-        ? { password } 
-        : { 
+      ...(authType === 'password'
+        ? { password }
+        : {
             privateKey,
             ...(passphrase ? { passphrase } : {})
           }
