@@ -1,6 +1,66 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 
+// Connection state manager to prevent race conditions
+class ConnectionStateManager {
+  constructor() {
+    this.states = new Map();
+    this.intervals = new Map();
+    this.manualDisconnects = new Map();
+  }
+
+  getState(userId) {
+    return this.states.get(userId) || {
+      isConnected: false,
+      connectionState: 'disconnected',
+      loading: false,
+      setupLoading: {
+        nginx: false,
+        'nginx-certbot': false,
+        caddy: false
+      },
+      snackbar: { open: false, message: '', severity: 'info' }
+    };
+  }
+
+  setState(userId, updates) {
+    const currentState = this.getState(userId);
+    const newState = { ...currentState, ...updates };
+    this.states.set(userId, newState);
+    return newState;
+  }
+
+  setManualDisconnect(userId, value) {
+    this.manualDisconnects.set(userId, value);
+  }
+
+  getManualDisconnect(userId) {
+    return this.manualDisconnects.get(userId) || false;
+  }
+
+  startHealthCheck(userId, callback) {
+    this.stopHealthCheck(userId);
+    const interval = setInterval(callback, 30000); // 30 seconds
+    this.intervals.set(userId, interval);
+  }
+
+  stopHealthCheck(userId) {
+    const interval = this.intervals.get(userId);
+    if (interval) {
+      clearInterval(interval);
+      this.intervals.delete(userId);
+    }
+  }
+
+  cleanup(userId) {
+    this.stopHealthCheck(userId);
+    this.states.delete(userId);
+    this.manualDisconnects.delete(userId);
+  }
+}
+
+const connectionStateManager = new ConnectionStateManager();
+
 export function useConnection(userId) {
   const [connection, setConnection] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -26,21 +86,14 @@ export function useConnection(userId) {
     };
   });
 
-  const [isConnected, setIsConnected] = useState(false);
-  const [connectionState, setConnectionState] = useState('disconnected');
-  const [loading, setLoading] = useState(false);
-  const [setupLoading, setSetupLoading] = useState({
-    nginx: false,
-    'nginx-certbot': false,
-    caddy: false
-  });
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
-  
-  // Use ref for manual disconnect to persist across renders
-  const manualDisconnectRef = useRef(false);
-  
-  // Connection check interval
-  const checkIntervalRef = useRef(null);
+  // Get current state from manager
+  const [state, setState] = useState(() => connectionStateManager.getState(userId));
+
+  // Sync with connection state manager
+  useEffect(() => {
+    const currentState = connectionStateManager.getState(userId);
+    setState(currentState);
+  }, [userId]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -48,43 +101,57 @@ export function useConnection(userId) {
     }
   }, [connection]);
 
+  const updateState = useCallback((updates) => {
+    const newState = connectionStateManager.setState(userId, updates);
+    setState(newState);
+  }, [userId]);
+
   const checkConnection = useCallback(async () => {
-    if (!userId || manualDisconnectRef.current) return;
+    if (!userId || connectionStateManager.getManualDisconnect(userId)) return;
 
     try {
       const res = await axios.get('/api/check-connection', {
         headers: { 'x-user-id': userId }
       });
-      
-      setIsConnected(res.data.connected);
-      setConnectionState(res.data.state || 'disconnected');
 
-      if (!res.data.connected && connectionState === 'connected') {
-        setSnackbar({
-          open: true,
-          message: 'Connection lost. Please reconnect.',
-          severity: 'error'
+      const wasConnected = state.connectionState === 'connected';
+      const isStillConnected = res.data.connected;
+
+      updateState({
+        isConnected: isStillConnected,
+        connectionState: res.data.state || 'disconnected'
+      });
+
+      if (!isStillConnected && wasConnected) {
+        updateState({
+          snackbar: {
+            open: true,
+            message: 'Connection lost. Please reconnect.',
+            severity: 'error'
+          }
         });
       }
     } catch (error) {
       console.error('Error checking connection:', error);
-      setIsConnected(false);
-      setConnectionState('error');
+      updateState({
+        isConnected: false,
+        connectionState: 'error'
+      });
     }
-  }, [userId, connectionState]);
+  }, [userId, state.connectionState, updateState]);
 
   // Setup periodic connection check
   useEffect(() => {
-    if (userId && isConnected && !manualDisconnectRef.current) {
-      checkIntervalRef.current = setInterval(checkConnection, 30000);
+    if (userId && state.isConnected && !connectionStateManager.getManualDisconnect(userId)) {
+      connectionStateManager.startHealthCheck(userId, checkConnection);
+    } else {
+      connectionStateManager.stopHealthCheck(userId);
     }
 
     return () => {
-      if (checkIntervalRef.current) {
-        clearInterval(checkIntervalRef.current);
-      }
+      connectionStateManager.stopHealthCheck(userId);
     };
-  }, [userId, isConnected, checkConnection]);
+  }, [userId, state.isConnected, checkConnection]);
 
   const validateConnection = useCallback(() => {
     const errors = [];
@@ -103,42 +170,46 @@ export function useConnection(userId) {
   const handleConnect = async () => {
     const errors = validateConnection();
     if (errors.length > 0) {
-      setSnackbar({
-        open: true,
-        message: `Validation errors: ${errors.join(', ')}`,
-        severity: 'error'
+      updateState({
+        snackbar: {
+          open: true,
+          message: `Validation errors: ${errors.join(', ')}`,
+          severity: 'error'
+        }
       });
       return;
     }
 
     try {
-      setLoading(true);
-      manualDisconnectRef.current = false;
-      setConnectionState('connecting');
+      updateState({ loading: true, connectionState: 'connecting' });
+      connectionStateManager.setManualDisconnect(userId, false);
 
       const res = await axios.post('/api/connect', connection, {
         headers: { 'x-user-id': userId },
         timeout: 30000 // 30 second timeout
       });
 
-      setIsConnected(true);
-      setConnectionState('connected');
-      setSnackbar({
-        open: true,
-        message: 'Connected successfully',
-        severity: 'success'
+      updateState({
+        isConnected: true,
+        connectionState: 'connected',
+        loading: false,
+        snackbar: {
+          open: true,
+          message: 'Connected successfully',
+          severity: 'success'
+        }
       });
 
-      // Start connection check interval
-      if (checkIntervalRef.current) {
-        clearInterval(checkIntervalRef.current);
-      }
-      checkIntervalRef.current = setInterval(checkConnection, 30000);
+      // Start health check
+      connectionStateManager.startHealthCheck(userId, checkConnection);
 
     } catch (error) {
       console.error('Connection error:', error);
-      setIsConnected(false);
-      setConnectionState('error');
+      updateState({
+        isConnected: false,
+        connectionState: 'error',
+        loading: false
+      });
 
       let errorMessage = 'Connection failed';
       if (error.response) {
@@ -147,81 +218,87 @@ export function useConnection(userId) {
         errorMessage = error.message;
       }
 
-      setSnackbar({
-        open: true,
-        message: errorMessage,
-        severity: 'error'
+      updateState({
+        snackbar: {
+          open: true,
+          message: errorMessage,
+          severity: 'error'
+        }
       });
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleDisconnect = async () => {
     try {
-      setLoading(true);
-      manualDisconnectRef.current = true;
-      setConnectionState('disconnecting');
+      updateState({ loading: true, connectionState: 'disconnecting' });
+      connectionStateManager.setManualDisconnect(userId, true);
 
       await axios.post('/api/disconnect', null, {
         headers: { 'x-user-id': userId }
       });
 
-      setIsConnected(false);
-      setConnectionState('disconnected');
-      setSnackbar({
-        open: true,
-        message: 'Disconnected successfully',
-        severity: 'success'
+      updateState({
+        isConnected: false,
+        connectionState: 'disconnected',
+        loading: false,
+        snackbar: {
+          open: true,
+          message: 'Disconnected successfully',
+          severity: 'success'
+        }
       });
 
-      // Clear connection check interval
-      if (checkIntervalRef.current) {
-        clearInterval(checkIntervalRef.current);
-        checkIntervalRef.current = null;
-      }
+      // Stop health check
+      connectionStateManager.stopHealthCheck(userId);
 
     } catch (error) {
       console.error('Disconnect error:', error);
-      setSnackbar({
-        open: true,
-        message: 'Failed to disconnect: ' + (error.response?.data?.error || error.message),
-        severity: 'error'
+      updateState({
+        snackbar: {
+          open: true,
+          message: 'Failed to disconnect: ' + (error.response?.data?.error || error.message),
+          severity: 'error'
+        },
+        loading: false
       });
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleQuickSetup = async (type) => {
-    if (!isConnected) {
-      setSnackbar({
-        open: true,
-        message: 'Please connect to your VPS first',
-        severity: 'warning'
+    if (!state.isConnected) {
+      updateState({
+        snackbar: {
+          open: true,
+          message: 'Please connect to your VPS first',
+          severity: 'warning'
+        }
       });
       return;
     }
 
     try {
-      setSetupLoading(prev => ({ ...prev, [type]: true }));
-      
+      updateState({
+        setupLoading: { ...state.setupLoading, [type]: true }
+      });
+
       const res = await axios.post('/api/quick-setup',
         { setupType: type },
-        { 
+        {
           headers: { 'x-user-id': userId },
           timeout: 180000 // 3 minute timeout for setup
         }
       );
 
-      setSnackbar({
-        open: true,
-        message: res.data.message,
-        severity: 'success'
+      updateState({
+        snackbar: {
+          open: true,
+          message: res.data.message,
+          severity: 'success'
+        }
       });
     } catch (error) {
       console.error('Setup error:', error);
-      
+
       let errorMessage = 'Setup failed';
       if (error.response?.data?.error) {
         errorMessage = error.response.data.error;
@@ -229,20 +306,26 @@ export function useConnection(userId) {
         errorMessage = error.message;
       }
 
-      setSnackbar({
-        open: true,
-        message: errorMessage,
-        severity: 'error'
+      updateState({
+        snackbar: {
+          open: true,
+          message: errorMessage,
+          severity: 'error'
+        }
       });
 
       // If we get a 401 or connection error, mark as disconnected
-      if (error.response?.status === 401 || 
+      if (error.response?.status === 401 ||
           error.message.includes('No active SSH connection')) {
-        setIsConnected(false);
-        setConnectionState('disconnected');
+        updateState({
+          isConnected: false,
+          connectionState: 'disconnected'
+        });
       }
     } finally {
-      setSetupLoading(prev => ({ ...prev, [type]: false }));
+      updateState({
+        setupLoading: { ...state.setupLoading, [type]: false }
+      });
     }
   };
 
@@ -250,29 +333,29 @@ export function useConnection(userId) {
     if (reason === 'clickaway') {
       return;
     }
-    setSnackbar(prev => ({ ...prev, open: false }));
+    updateState({
+      snackbar: { ...state.snackbar, open: false }
+    });
   };
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (checkIntervalRef.current) {
-        clearInterval(checkIntervalRef.current);
-      }
+      connectionStateManager.cleanup(userId);
     };
-  }, []);
+  }, [userId]);
 
   return {
     connection,
-    isConnected,
-    connectionState,
+    isConnected: state.isConnected,
+    connectionState: state.connectionState,
     connect: handleConnect,
     disconnect: handleDisconnect,
     setConnection,
-    loading,
-    setupLoading,
-    snackbar,
-    setSnackbar,
+    loading: state.loading,
+    setupLoading: state.setupLoading,
+    snackbar: state.snackbar,
+    setSnackbar: (snackbar) => updateState({ snackbar }),
     handleConnect,
     handleDisconnect,
     handleQuickSetup,

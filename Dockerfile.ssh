@@ -1,0 +1,47 @@
+FROM ubuntu:22.04
+
+# Install SSH server and utilities
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    sudo \
+    vim \
+    nano \
+    curl \
+    wget \
+    htop \
+    tree \
+    git \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create SSH directory
+RUN mkdir /var/run/sshd
+
+# Create test user
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass123' | chpasswd && \
+    usermod -aG sudo testuser
+
+# Configure SSH
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords no/' /etc/ssh/sshd_config
+
+# Set root password
+RUN echo 'root:rootpass123' | chpasswd
+
+# Create some test files and directories
+RUN mkdir -p /home/testuser/test-files && \
+    echo "Hello, World!" > /home/testuser/test-files/hello.txt && \
+    echo "This is a test file for VPS Manager" > /home/testuser/test-files/test.txt && \
+    mkdir -p /home/testuser/test-files/subdir && \
+    echo "Content in subdirectory" > /home/testuser/test-files/subdir/nested.txt && \
+    dd if=/dev/zero of=/home/testuser/test-files/large-file.bin bs=1M count=50 && \
+    chown -R testuser:testuser /home/testuser
+
+# Expose SSH port
+EXPOSE 22
+
+# Start SSH server
+CMD ["/usr/sbin/sshd", "-D"]

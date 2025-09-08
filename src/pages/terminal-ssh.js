@@ -14,7 +14,8 @@ const WebLinksAddon = dynamic(() => import('xterm-addon-web-links').then((mod) =
 const VPSManager = () => {
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [serverInfo, setServerInfo] = useState(null);
-    const [currentDirectory, setCurrentDirectory] = useState('/home/user');
+    const [currentDirectory, setCurrentDirectory] = useState('/');
+    const [isTerminalReady, setIsTerminalReady] = useState(false);
     const { userId } = useUser();
     const terminalRef = useRef(null);
     const terminalInstance = useRef(null);
@@ -39,6 +40,12 @@ const VPSManager = () => {
         };
     }, []);
 
+    useEffect(() => {
+        if (userId && isTerminalReady) {
+            detectCurrentDirectory();
+        }
+    }, [userId, isTerminalReady]);
+
     const initializeTerminal = () => {
         if (terminalRef.current && !terminalInstance.current) {
             terminalInstance.current = new Terminal({
@@ -59,11 +66,55 @@ const VPSManager = () => {
             fitAddon.current.fit();
 
             terminalInstance.current.writeln('Welcome to VPS Manager Terminal');
-            terminalInstance.current.writeln('Type "help" for a list of available commands');
+            terminalInstance.current.writeln('Please connect to your VPS to start using the terminal');
             promptUser();
 
             terminalInstance.current.onKey(handleKeyPress);
             terminalInstance.current.onData(handleTerminalData);
+            setIsTerminalReady(true);
+        }
+    };
+
+    const detectCurrentDirectory = async () => {
+        if (!userId) return;
+
+        try {
+            // First, try to get the user's home directory
+            const homeResponse = await axios.get('/api/terminal', {
+                params: { command: 'echo $HOME', currentDirectory: '/' },
+                headers: { 'x-user-id': userId },
+                timeout: 5000
+            });
+
+            let homeDir = '/';
+            if (homeResponse.data.output) {
+                homeDir = homeResponse.data.output.trim();
+            }
+
+            // Then try to get the current working directory
+            const pwdResponse = await axios.get('/api/terminal', {
+                params: { command: 'pwd', currentDirectory: homeDir },
+                headers: { 'x-user-id': userId },
+                timeout: 5000
+            });
+
+            if (pwdResponse.data.output) {
+                const detectedDir = pwdResponse.data.output.trim();
+                setCurrentDirectory(detectedDir);
+                terminalInstance.current.writeln(`\r\n\x1b[32mConnected! Current directory: ${detectedDir}\x1b[0m`);
+                terminalInstance.current.writeln('\x1b[32mType "help" for a list of available commands\x1b[0m');
+            } else {
+                setCurrentDirectory(homeDir);
+                terminalInstance.current.writeln(`\r\n\x1b[32mConnected! Using home directory: ${homeDir}\x1b[0m`);
+                terminalInstance.current.writeln('\x1b[32mType "help" for a list of available commands\x1b[0m');
+            }
+
+            promptUser();
+        } catch (error) {
+            console.error('Failed to detect current directory:', error);
+            terminalInstance.current.writeln(`\r\n\x1b[31mFailed to detect directory. Using default: ${currentDirectory}\x1b[0m`);
+            terminalInstance.current.writeln('\x1b[32mType "help" for a list of available commands\x1b[0m');
+            promptUser();
         }
     };
 
@@ -136,6 +187,9 @@ const VPSManager = () => {
             displayHelp();
         } else if (command.startsWith('cd ')) {
             await changeDirectory(command.split(' ')[1]);
+        } else if (command === 'pwd') {
+            // Handle pwd command locally to show current directory
+            terminalInstance.current.writeln(currentDirectory);
         } else {
             try {
                 const response = await axios.post('/api/terminal', { command, currentDirectory }, {
@@ -191,6 +245,11 @@ const VPSManager = () => {
             });
             if (response.data.newDirectory) {
                 setCurrentDirectory(response.data.newDirectory);
+            } else if (response.data.output) {
+                const newDirFromOutput = response.data.output.trim().split('\n').pop();
+                if (newDirFromOutput && newDirFromOutput !== currentDirectory) {
+                    setCurrentDirectory(newDirFromOutput);
+                }
             } else {
                 terminalInstance.current.writeln(`cd: ${newDir}: No such file or directory`);
             }
@@ -202,14 +261,15 @@ const VPSManager = () => {
 
     const displayHelp = () => {
         const helpText = `
-    Available commands:
+    \x1b[32mAvailable commands:\x1b[0m
       cd <directory>  - Change directory
       ls              - List files in the current directory
       pwd             - Print working directory
       help            - Display this help message
       clear           - Clear the terminal screen
-    
-    Use Tab for command and path completion.
+
+    \x1b[33mNote: Directory is automatically detected on connection\x1b[0m
+    \x1b[36mUse Tab for command and path completion\x1b[0m
         `;
         terminalInstance.current.writeln(helpText);
     };

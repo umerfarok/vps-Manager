@@ -1,0 +1,9 @@
+This is a sample text file for testing VPS Manager file operations.
+
+Features to test:
+- File reading and editing
+- File downloading
+- File permissions
+- File metadata
+
+Created for Docker development environment testing.

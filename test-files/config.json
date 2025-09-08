@@ -1,0 +1,18 @@
+{
+  "app": {
+    "name": "VPS Manager",
+    "version": "1.0.0",
+    "environment": "development"
+  },
+  "server": {
+    "host": "localhost",
+    "port": 3000,
+    "ssh_port": 2222
+  },
+  "features": {
+    "file_manager": true,
+    "terminal": true,
+    "system_monitoring": true,
+    "ssl_management": true
+  }
+}

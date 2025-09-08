@@ -1,0 +1,41 @@
+version: '3.8'
+
+# Development override configuration
+services:
+  vps-manager:
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:3002
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - .:/app:cached
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+    ports:
+      - "3002:3000"
+    networks:
+      - vps-manager-network
+
+  ssh-server:
+    environment:
+      - SSH_USER=testuser
+      - SSH_PASSWORD=testpass123
+      - SSH_ROOT_PASSWORD=rootpass123
+    volumes:
+      - ./test-files:/home/testuser/test-files:ro
+    networks:
+      - vps-manager-network
+
+  # Development database (optional)
+  postgres:
+    environment:
+      - POSTGRES_DB=vps_manager_dev
+      - POSTGRES_USER=vps_dev
+      - POSTGRES_PASSWORD=dev_password
+    ports:
+      - "5432:5432"
+
+networks:
+  vps-manager-network:
+    driver: bridge

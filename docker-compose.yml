@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # VPS Manager Application
+  vps-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:3002
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - ssh-server
+    networks:
+      - vps-manager-network
+
+  # Test SSH Server for development
+  ssh-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.ssh
+    ports:
+      - "2222:22"
+    environment:
+      - SSH_USER=testuser
+      - SSH_PASSWORD=testpass123
+      - SSH_ROOT_PASSWORD=rootpass123
+    volumes:
+      - ssh-data:/home/testuser
+      - ./test-files:/home/testuser/test-files
+    networks:
+      - vps-manager-network
+    healthcheck:
+      test: ["CMD", "ssh", "-o", "StrictHostKeyChecking=no", "-p", "22", "testuser@localhost", "echo", "health_check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Optional: Redis for session management (if needed in future)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - vps-manager-network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: PostgreSQL for future database features
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=vps_manager
+      - POSTGRES_USER=vps_user
+      - POSTGRES_PASSWORD=vps_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - vps-manager-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vps_user -d vps_manager"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  ssh-data:
+  redis-data:
+  postgres-data:
+
+networks:
+  vps-manager-network:
+    driver: bridge
