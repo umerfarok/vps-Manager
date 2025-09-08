@@ -8,7 +8,7 @@ import {
   Folder, InsertDriveFile, ArrowUpward, CreateNewFolder, NoteAdd, Refresh, MoreVert,
   Edit, Delete, FileCopy, Download, Upload, Save, Cancel, Description, Image,
   Code, Settings, PictureAsPdf, AudioFile, VideoFile, Archive, TextSnippet,
-  Home, ChevronRight, CheckBox, SelectAll, DeleteSweep, ContentCopy, DriveFileMove,
+  Home, ChevronRight, CheckBox, CheckBoxOutlineBlank, SelectAll, DeleteSweep, ContentCopy, DriveFileMove,
   Keyboard
 } from '@mui/icons-material';
 import axios from 'axios';
